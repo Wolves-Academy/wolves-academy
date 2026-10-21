@@ -2,9 +2,12 @@
 """Wolves Sports Academy Manager, SQLite layer: schema, seed data, helpers, backups."""
 import json
 import os
+import re
 import shutil
 import sqlite3
+import time
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "academy.db")
@@ -185,11 +188,126 @@ CREATE TABLE IF NOT EXISTS player_freezes (
 EXP_ONCE, EXP_MONTHLY, EXP_PER_SESSION = 0, 1, 2
 
 
+# ---------- connection: SQLite locally, Postgres (Supabase) when DATABASE_URL is set ----------
+
+def _pg_url():
+    return os.environ.get("DATABASE_URL", "").strip()
+
+
+class Row(dict):
+    """A result row usable like sqlite3.Row: row["col"], row[0], keys(), dict(row), tuple(row)."""
+    def __getitem__(self, k):
+        if isinstance(k, int):
+            return list(self.values())[k]
+        return dict.__getitem__(self, k)
+
+    def __iter__(self):
+        return iter(self.values())
+
+
+_SUM_EQ = re.compile(r"SUM\(\s*([\w.]+)\s*=\s*'([^']*)'\s*\)", re.I)
+
+
+@lru_cache(maxsize=2048)
+def _pg_sql(sql):
+    """Translate this app's SQLite dialect to Postgres. Returns (sql, is_insert)."""
+    s = _SUM_EQ.sub(r"SUM(CASE WHEN \1='\2' THEN 1 ELSE 0 END)", sql)
+    s = re.sub(r"\bINTEGER PRIMARY KEY AUTOINCREMENT\b", "SERIAL PRIMARY KEY", s)
+    s = re.sub(r"\bREAL\b", "DOUBLE PRECISION", s)
+    s = re.sub(r"\bLIKE\b", "ILIKE", s)              # SQLite LIKE ignores case
+    ignore = bool(re.match(r"\s*INSERT OR IGNORE\b", s, re.I))
+    s = re.sub(r"^\s*INSERT OR IGNORE\b", "INSERT", s, flags=re.I)
+    is_insert = bool(re.match(r"\s*INSERT\b", s, re.I))
+    s = s.replace("%", "%%").replace("?", "%s")
+    if ignore:
+        s += " ON CONFLICT DO NOTHING"
+    if is_insert and "RETURNING" not in s.upper():
+        s += " RETURNING id"
+    return s, is_insert
+
+
+class _PgCursor:
+    def __init__(self, cur, is_insert):
+        self._cur = cur
+        self.rowcount = cur.rowcount
+        self.lastrowid = None
+        if is_insert:
+            row = cur.fetchone() if cur.description else None
+            self.lastrowid = row["id"] if row else None
+
+    def fetchone(self):
+        return self._cur.fetchone() if self._cur.description else None
+
+    def fetchall(self):
+        return self._cur.fetchall() if self._cur.description else []
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _PgConn:
+    """Same surface as the sqlite3 connection this app uses."""
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, sql, params=()):
+        q, is_insert = _pg_sql(sql)
+        cur = self.raw.cursor(row_factory=_pg_row_factory)
+        cur.execute(q, tuple(params) if params else None)
+        return _PgCursor(cur, is_insert)
+
+    def executemany(self, sql, seq):
+        for p in seq:
+            self.execute(sql, p)
+
+    def executescript(self, script):
+        for stmt in (x.strip() for x in script.split(";")):
+            if stmt and not all(l.strip().startswith("--") or not l.strip() for l in stmt.splitlines()):
+                self.execute(stmt)
+
+    def commit(self):
+        pass                                          # autocommit: every statement is saved at once
+
+    def close(self):
+        _pg_pool().putconn(self.raw)
+
+
+def _pg_row_factory(cursor):
+    names = [c.name for c in cursor.description] if cursor.description else []
+    return lambda values: Row(zip(names, values))
+
+
+_POOL = {}
+
+
+def _pg_pool():
+    url = _pg_url()
+    if url not in _POOL:
+        from psycopg_pool import ConnectionPool
+        # Supabase's transaction pooler does not support prepared statements
+        _POOL[url] = ConnectionPool(url, min_size=1, max_size=int(os.environ.get("DB_POOL_MAX", "8")),
+                                    kwargs={"autocommit": True, "prepare_threshold": None}, open=True)
+    return _POOL[url]
+
+
+def is_postgres():
+    return bool(_pg_url())
+
+
 def get_db():
+    if is_postgres():
+        return _PgConn(_pg_pool().getconn())
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     return con
+
+
+def _columns(con, table):
+    if is_postgres():
+        return {r["column_name"] for r in con.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=?", (table,)).fetchall()}
+    return {r["name"] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def init_db():
@@ -216,17 +334,17 @@ def init_db():
 
 def _migrate(con):
     """Add columns introduced after the first release, without touching existing data."""
-    cols = {r["name"] for r in con.execute("PRAGMA table_info(players)").fetchall()}
+    cols = _columns(con, "players")
     if "added_by" not in cols:
         con.execute("ALTER TABLE players ADD COLUMN added_by TEXT DEFAULT ''")
-    acols = {r["name"] for r in con.execute("PRAGMA table_info(attendance)").fetchall()}
+    acols = _columns(con, "attendance")
     if "trial" not in acols:
         con.execute("ALTER TABLE attendance ADD COLUMN trial INTEGER DEFAULT 0")
-    scols = {r["name"] for r in con.execute("PRAGMA table_info(subscriptions)").fetchall()}
+    scols = _columns(con, "subscriptions")
     if "paused_days" not in scols:
         con.execute("ALTER TABLE subscriptions ADD COLUMN paused_days INTEGER DEFAULT 0")
     try:
-        ecols = {r["name"] for r in con.execute("PRAGMA table_info(expenses)").fetchall()}
+        ecols = _columns(con, "expenses")
         if ecols and "recurring" not in ecols:
             con.execute("ALTER TABLE expenses ADD COLUMN recurring INTEGER DEFAULT 0")
         if ecols and "end_date" not in ecols:
@@ -250,13 +368,22 @@ def _migrate(con):
         "AND (f.end_date IS NULL OR attendance.session_date < f.end_date))")
 
 
+_SETTINGS = {"at": 0.0, "data": None, "key": None}
+
+
 def get_settings():
+    # settings are read by nearly every helper; on a remote database a 5-second copy saves
+    # dozens of round trips per page (ponytail: per-process cache, 5s staleness across workers)
+    key = (_pg_url(), DB_PATH)
+    if _SETTINGS["data"] is not None and _SETTINGS["key"] == key and time.time() - _SETTINGS["at"] < 5:
+        return json.loads(_SETTINGS["data"])
     con = get_db()
     row = con.execute("SELECT data FROM settings WHERE id=1").fetchone()
     con.close()
     data = dict(DEFAULT_SETTINGS)
     if row:
         data.update(json.loads(row["data"]))
+    _SETTINGS.update(at=time.time(), data=json.dumps(data), key=key)
     return data
 
 
@@ -265,6 +392,7 @@ def save_settings(data):
     con.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(data, ensure_ascii=False),))
     con.commit()
     con.close()
+    _SETTINGS["data"] = None
 
 
 # ---------- business helpers ----------
@@ -808,7 +936,7 @@ def coach_month_cost(con, coach, month=None):
 
 def _has_recurring(con):
     try:
-        return "recurring" in {r["name"] for r in con.execute("PRAGMA table_info(expenses)").fetchall()}
+        return "recurring" in _columns(con, "expenses")
     except Exception:
         return False
 
@@ -1250,8 +1378,9 @@ def weekly_report(con, start=None, settings=None):
 # ---------- backups ----------
 
 def backup_db(force=False):
-    """Copy academy.db to backups/academy-YYYY-MM-DD.db; keep last 30."""
-    if not os.path.exists(DB_PATH):
+    """Copy academy.db to backups/academy-YYYY-MM-DD.db; keep last 30.
+    On Supabase the database is backed up by Supabase itself."""
+    if is_postgres() or not os.path.exists(DB_PATH):
         return None
     os.makedirs(BACKUP_DIR, exist_ok=True)
     target = os.path.join(BACKUP_DIR, f"academy-{today_str()}.db")

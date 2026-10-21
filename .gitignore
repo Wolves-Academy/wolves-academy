@@ -21,3 +21,6 @@ config.yml
 
 # local review captures
 review/
+
+# local-only python packages for testing
+.pydeps/

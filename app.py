@@ -160,6 +160,8 @@ def logout():
 @app.before_request
 def daily_backup_hook():
     t = date.today().isoformat()
+    if db.is_postgres():
+        return                     # Supabase backs up the database; cloud disks are read-only
     if _last_backup_check["date"] != t:
         _last_backup_check["date"] = t
         db.backup_db()

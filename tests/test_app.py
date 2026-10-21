@@ -16,6 +16,12 @@ import database as db  # noqa: E402
 
 TMP = tempfile.mkdtemp()
 db.DB_PATH = os.path.join(TMP, "t.db")
+if db.is_postgres():
+    # fresh Postgres schema for every gate (set DATABASE_URL to a THROWAWAY database only)
+    import psycopg
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as _c:
+        _c.execute("DROP SCHEMA public CASCADE")
+        _c.execute("CREATE SCHEMA public")
 db.BACKUP_DIR = os.path.join(TMP, "b")
 import app as appmod  # noqa: E402
 
