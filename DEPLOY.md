@@ -14,13 +14,13 @@ Tables are created automatically on first start. No data is shared with any othe
 |---|---|
 | `DATABASE_URL` | the pooler URI from step 1 |
 | `WSA_SECRET` | any long random string (keeps logins secure) |
-| `TZ` | `Asia/Amman` |
 
-## 3. Start command
-```
-gunicorn app:app --workers 2 --bind 0.0.0.0:$PORT
-```
-Pick a host region next to the Supabase region: the app talks to the database many times per page.
+## 3. Vercel
+1. Push this repo to GitHub.
+2. vercel.com → Add New → Project → import the repo. Vercel detects Flask from `app.py`; no settings to change.
+3. Add the environment variables above (Settings → Environment Variables), then Deploy.
+4. Settings → Functions → set the region to Frankfurt (`fra1`), next to the Supabase database:
+   the app talks to the database many times per page. Jordan time is set by the app itself.
 
 ## 4. First login
 Admin PIN is `0000`. Change it in Settings straight away, then create each coach in **Coaches**

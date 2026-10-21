@@ -28,7 +28,8 @@ EXPORTS_DIR = os.path.join(BASE_DIR, "exports")
 # On Linux hosts (e.g. PythonAnywhere) pin the clock to Jordan time so
 # "today" and training-day defaults match the academy, not UTC.
 if os.name != "nt":
-    os.environ.setdefault("TZ", "Asia/Amman")
+    # cloud hosts (Vercel/AWS) preset TZ to UTC, so override it: "today" must be Jordan's today
+    os.environ["TZ"] = os.environ.get("APP_TZ", "Asia/Amman")
     import time as _time
     if hasattr(_time, "tzset"):
         _time.tzset()
