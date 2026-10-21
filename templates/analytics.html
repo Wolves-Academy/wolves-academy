@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import money %}
+
+{# Single-series column chart, scoresheet style. data: [{d, v}] #}
+{% macro bars(data, cls='c-ink', vmax=none, unit='') %}
+{% set n = data|length %}
+{% set top = vmax or [data|map(attribute='v')|max if n else 0, 1]|max %}
+{% set step = 290 / ([n, 1]|max) %}
+<svg viewBox="0 0 320 132" class="w-full h-auto max-h-[190px] block mx-auto" role="img" dir="ltr">
+  {% for g in [0, 0.5, 1] %}
+  <line class="c-grid" x1="28" x2="318" y1="{{ 10 + 100 * (1 - g) }}" y2="{{ 10 + 100 * (1 - g) }}"/>
+  <text class="c-lbl" x="24" y="{{ 13 + 100 * (1 - g) }}" text-anchor="end">{{ money(top * g) }}</text>
+  {% endfor %}
+  {% for p in data %}
+  {% set h = 100 * (p.v or 0) / top %}{% set w = [step * 0.5, 22]|min %}
+  {% set x = 28 + step * loop.index0 + (step - w) / 2 %}
+  <rect class="{{ cls }}" x="{{ x }}" y="{{ 110 - h }}" width="{{ w }}" height="{{ h }}"><title>{{ p.d }} · {{ money(p.v) }}{{ unit }}</title></rect>
+  <text class="c-lbl" x="{{ x + w / 2 }}" y="124" text-anchor="middle">{{ p.d }}</text>
+  {% else %}
+  <text class="c-lbl" x="170" y="64" text-anchor="middle">-</text>
+  {% endfor %}
+</svg>
+{% endmacro %}
+
+{% block title %}{{ t('analytics_title') }}{% endblock %}
+{% block head %}
+<style>
+  .m-led4 > div:nth-child(n+3) { border-top:1px solid rgb(var(--rule)); }
+  .m-led4 > div:nth-child(3) { border-inline-start:0; }
+  @media (min-width:1024px){
+    .m-led4 { --cols:4 !important; }
+    .m-led4 > div:nth-child(n+3) { border-top:0; }
+    .m-led4 > div:nth-child(3) { border-inline-start:1px solid rgb(var(--rule)); }
+  }
+  .c-ink { fill:rgb(var(--ink-2)); } .c-acc { fill:rgb(var(--acc)); } .c-bad { fill:rgb(var(--bad) / .75); } .c-ok { fill:rgb(var(--ok)); }
+  .c-grid { stroke:rgb(var(--rule)); stroke-width:1; } .c-zero { stroke:rgb(var(--rule-strong)); stroke-width:1; }
+  .c-lbl { fill:rgb(var(--muted)); font-size:11px; font-family:Montserrat,sans-serif; }
+  .c-line { fill:none; stroke:rgb(var(--acc)); stroke-width:2; } .c-pt { fill:rgb(var(--sheet)); stroke:rgb(var(--acc)); stroke-width:2; }
+  .swatch { width:10px; height:10px; border-radius:1px; display:inline-block; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="stack">
+  <div class="flex items-end gap-3 flex-wrap">
+    <h1 class="h-page">{{ t('analytics_title') }}</h1>
+    <div class="ms-auto flex gap-2">
+      <a href="/reports/weekly" class="btn btn-line btn-sm">{{ icon('calendar','w-4 h-4') }}{{ t('w_weekly_report') }}</a>
+      <a href="/reports/trials" class="btn btn-line btn-sm">{{ icon('users','w-4 h-4') }}{{ t('w_trials_report') }}</a>
+    </div>
+  </div>
+
+  <section class="sheet">
+    <div class="ledger m-led4" style="--cols:2">
+      <div><div class="k">{{ t('an_total') }}</div><div class="v mid num">{{ kpi.total }}</div></div>
+      <div><div class="k">{{ t('an_active') }}</div><div class="v mid num">{{ kpi.active }}</div></div>
+      <div><div class="k">{{ t('an_rate') }}</div>
+        <div class="v mid num {{ 'text-ok' if kpi.rate >= 75 else ('text-warn' if kpi.rate >= 50 else 'text-bad') }}">{{ kpi.rate }}<span class="u">%</span></div></div>
+      <div><div class="k">{{ t('an_revenue') }}</div><div class="v mid num">{{ money(kpi.revenue) }}<span class="u">JD</span></div></div>
+    </div>
+  </section>
+
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('an_ai_insights') }}</h2></div>
+    <div class="rows">
+      {% for ins in insights %}
+      {% set tone = {'ok':'ok','warn':'warn','bad':'bad','muted':'mute'}[ins.tone] %}
+      <div class="row items-start">
+        <span class="tag tag-{{ tone }} mt-0.5">{{ icon('trend-up' if ins.tone == 'ok' else ('alert' if ins.tone in ['warn','bad'] else 'clock'),'w-3.5 h-3.5') }}</span>
+        <p class="flex-1 text-[14px] leading-relaxed">{{ ins.text }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  {% if at_risk %}
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('an_at_risk') }}</h2><span class="meta num">{{ at_risk|length }}</span></div>
+    <div class="sheet-bd sub !pb-0">{{ t('an_at_risk_sub') }}</div>
+    <div class="rows mt-2">
+      {% for r in at_risk %}
+      <a href="/players/{{ r.id }}" class="row">
+        <span class="flex-1 font-bold truncate">{{ r.name }}</span>
+        <div class="bar w-24"><i style="width: {{ r.rate }}%; background:rgb(var(--bad))"></i></div>
+        <span class="num text-bad font-bold w-12 text-end">{{ r.rate }}%</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- money by month -->
+  {% set vals = fin_months|map(attribute='rev')|list + fin_months|map(attribute='earned')|list + fin_months|map(attribute='exp')|list + fin_months|map(attribute='profit')|list %}
+  {% set vmax = [vals|max if vals else 0, 1]|max %}{% set vmin = [vals|min if vals else 0, 0]|min %}
+  {% set span = vmax - vmin %}
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('an_chart_finance') }}</h2>
+      <a href="/finance" class="meta text-accent font-bold">{{ t('nav_finance') }}</a></div>
+    <div class="ledger" style="--cols:3">
+      <div><div class="k">{{ t('fin_revenue') }}</div><div class="v mid num !text-[18px]">{{ money(fin.revenue) }}</div></div>
+      <div><div class="k">{{ t('fin_expenses') }}</div><div class="v mid num !text-[18px]">{{ money(fin.expenses) }}</div></div>
+      <div><div class="k">{{ t('fin_profit') }}</div><div class="v mid num !text-[18px] {{ 'text-ok' if fin.profit >= 0 else 'text-bad' }}">{{ money(fin.profit) }}</div></div>
+    </div>
+    <div class="sheet-bd ledger-rule">
+      <div class="flex gap-4 flex-wrap sub mb-2">
+        <span class="flex items-center gap-1.5"><i class="swatch" style="background:rgb(var(--ink-2))"></i>{{ t('m_received') }}</span>
+        <span class="flex items-center gap-1.5"><i class="swatch" style="background:rgb(var(--acc))"></i>{{ t('m_earned') }}</span>
+        <span class="flex items-center gap-1.5"><i class="swatch" style="background:rgb(var(--bad) / .75)"></i>{{ t('fin_expenses') }}</span>
+        <span class="flex items-center gap-1.5"><i class="swatch" style="background:rgb(var(--ok))"></i>{{ t('fin_profit') }}</span>
+      </div>
+      <svg viewBox="0 0 320 140" class="w-full h-auto max-h-[190px] block mx-auto" role="img" aria-label="{{ t('an_chart_finance') }}" dir="ltr">
+        <line class="c-grid" x1="28" x2="318" y1="10" y2="10"/>
+        <text class="c-lbl" x="24" y="13" text-anchor="end">{{ money(vmax) }}</text>
+        <line class="c-zero" x1="28" x2="318" y1="{{ 10 + 110 * vmax / span }}" y2="{{ 10 + 110 * vmax / span }}"/>
+        <text class="c-lbl" x="24" y="{{ 13 + 110 * vmax / span }}" text-anchor="end">0</text>
+        {% set step = 290 / ([fin_months|length, 1]|max) %}
+        {% for f in fin_months %}
+        {% set x0 = 28 + step * loop.index0 + step * 0.12 %}{% set bw = step * 0.76 / 4 %}
+        {% for key, cls in [('rev','c-ink'), ('earned','c-acc'), ('exp','c-bad'), ('profit','c-ok')] %}
+        {% set v = f[key] or 0 %}{% set y1 = 10 + 110 * (vmax - v) / span %}{% set y0 = 10 + 110 * vmax / span %}
+        <rect class="{{ cls if not (key == 'profit' and v < 0) else 'c-bad' }}" x="{{ x0 + bw * loop.index0 }}" y="{{ [y1, y0]|min }}" width="{{ bw - 1 }}" height="{{ (y1 - y0)|abs }}"><title>{{ f.d }} · {{ key }} {{ money(v) }} JD</title></rect>
+        {% endfor %}
+        <text class="c-lbl" x="{{ 28 + step * loop.index0 + step / 2 }}" y="136" text-anchor="middle">{{ f.d }}</text>
+        {% endfor %}
+      </svg>
+    </div>
+  </section>
+
+  <div class="grid gap-4 lg:gap-5 lg:grid-cols-2 items-start">
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('an_chart_rate') }}</h2></div>
+      <div class="sheet-bd">
+        {% set n = att_chart|length %}{% set step = 290 / ([n - 1, 1]|max) %}
+        <svg viewBox="0 0 320 132" class="w-full h-auto max-h-[190px] block mx-auto" role="img" dir="ltr">
+          {% for g in [0, 0.5, 1] %}
+          <line class="c-grid" x1="28" x2="318" y1="{{ 10 + 100 * (1 - g) }}" y2="{{ 10 + 100 * (1 - g) }}"/>
+          <text class="c-lbl" x="24" y="{{ 13 + 100 * (1 - g) }}" text-anchor="end">{{ (100 * g)|int }}%</text>
+          {% endfor %}
+          {% if n %}
+          <polyline class="c-line" points="{% for p in att_chart %}{{ 28 + step * loop.index0 }},{{ 110 - p.v }} {% endfor %}"/>
+          {% for p in att_chart %}
+          <circle class="c-pt" cx="{{ 28 + step * loop.index0 }}" cy="{{ 110 - p.v }}" r="2.6"><title>{{ p.d }} · {{ p.v }}%</title></circle>
+          {% if loop.first or loop.last or loop.index0 % 3 == 0 %}<text class="c-lbl" x="{{ 28 + step * loop.index0 }}" y="124" text-anchor="middle">{{ p.d }}</text>{% endif %}
+          {% endfor %}
+          {% else %}<text class="c-lbl" x="170" y="64" text-anchor="middle">-</text>{% endif %}
+        </svg>
+      </div>
+    </section>
+
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('an_chart_rev') }}</h2></div>
+      <div class="sheet-bd">{{ bars(rev_chart, 'c-ink', unit=' JD') }}</div>
+    </section>
+
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('an_chart_groups') }}</h2></div>
+      <div class="sheet-bd grid gap-2.5">
+        {% for g in grp_chart %}
+        <div class="flex items-center gap-3 text-[13px]">
+          <span class="w-28 shrink-0 truncate">{{ g.d }}</span>
+          <div class="bar flex-1"><i style="width: {{ g.rate }}%; background:rgb(var(--acc))"></i></div>
+          <span class="num w-20 text-end shrink-0 {{ 'text-faint' if g.players == 0 }}">{{ g.rate }}% <span class="text-faint">· {{ g.players }}</span></span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('an_chart_new') }}</h2></div>
+      <div class="sheet-bd">{{ bars(new_chart, 'c-acc') }}</div>
+    </section>
+  </div>
+</div>
+{% endblock %}

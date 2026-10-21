@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import money, initials %}
+{% block title %}{{ t('w_coaches') }}{% endblock %}
+
+{% macro state_tag(c) -%}
+{%- set s = c.salary -%}
+{%- if not c.active %}<span class="tag tag-mute">{{ t('w_inactive') }}</span>
+{%- elif s.state == 'paid' %}<span class="tag tag-ok">{{ t('m_paid') }}</span>
+{%- elif s.state == 'partial' %}<span class="tag tag-warn">{{ t('m_partial') }}</span>
+{%- elif s.state == 'due' %}<span class="tag tag-bad">{{ t('m_due') }}</span>
+{%- else %}<span class="tag tag-mute">{{ t('m_nothing_due') }}</span>{% endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="stack">
+  <div class="flex items-end gap-3 flex-wrap">
+    <div class="min-w-0">
+      <h1 class="h-page">{{ t('w_coaches') }}</h1>
+      <div class="sub mt-1">{{ t('w_coaches_sub') }}</div>
+    </div>
+    <button class="btn btn-ink btn-sm ms-auto" onclick="openSheet('addCoach')">{{ icon('plus','w-4 h-4') }}{{ t('add_coach') }}</button>
+  </div>
+
+  {% if code_error %}<div class="sheet sheet-bd text-bad text-sm font-semibold" role="alert">{{ t('w_code_error') }}</div>{% endif %}
+
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_coaches') }}</h2><span class="meta num">{{ coaches|length }}</span></div>
+    <div class="rows">
+      {% for c in coaches %}
+      <div class="row stack-sm {{ '' if c.active else 'opacity-60' }}">
+        {{ initials(c.name) }}
+        <a href="/coaches/{{ c.id }}" class="flex-1 min-w-0">
+          <div class="font-bold truncate flex items-center gap-2">{{ c.name }} {{ state_tag(c) }}</div>
+          <div class="sub num">{{ t('salary_monthly') if c.salary_type=='monthly' else t('salary_session') }} · {{ money(c.salary_amount) }} JD{% if c.phone %} · {{ c.phone }}{% endif %}</div>
+          <div class="sub mt-0.5">
+            {% if c.today %}<span class="text-ok font-semibold">{{ t('w_in_at', t=(c.today.check_in or '-')) }}</span>{% else %}<span>{{ t('w_not_in') }}</span>{% endif %}
+            · <span class="num">{{ t('w_days_month', n=c.days) }}</span>
+            · {{ t('w_last_login') }} <span class="num" data-ago="{{ c.last_login or '' }}">{{ (c.last_login or '')[:10] or t('w_never') }}</span>
+          </div>
+        </a>
+        <div class="end">
+          <span class="mid num !text-[20px] tracking-[.12em]">{{ c.code or '-' }}</span>
+          {% if c.code %}<button type="button" class="btn btn-line btn-sm btn-icon" onclick="copyCode('{{ c.code }}')" aria-label="{{ t('w_copy_code') }}" title="{{ t('w_copy_code') }}">{{ icon('file','w-4 h-4') }}</button>{% endif %}
+        </div>
+      </div>
+      {% else %}<div class="empty">{{ t('no_coaches') }}</div>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<div id="addCoach" class="ovl">
+  <div class="panel">
+    <div class="panel-hd"><h3>{{ t('add_coach') }}</h3>
+      <button class="btn btn-line btn-sm btn-icon ms-auto" onclick="closeSheet('addCoach')" aria-label="{{ t('close') }}">{{ icon('x','w-4 h-4') }}</button></div>
+    <div class="panel-bd">
+      <form method="post" action="/coaches/save" class="grid gap-3">
+        <input type="hidden" name="back" value="/coaches">
+        <label class="field"><span class="label">{{ t('coach_name') }}</span><input name="name" required class="inp"></label>
+        <label class="field"><span class="label">{{ t('coach_phone') }}</span><input name="phone" inputmode="tel" placeholder="07XXXXXXXX" class="inp num"></label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="field"><span class="label">{{ t('salary_type') }}</span>
+            <select name="salary_type" class="inp"><option value="monthly">{{ t('salary_monthly') }}</option><option value="session">{{ t('salary_session') }}</option></select></label>
+          <label class="field"><span class="label">{{ t('salary_amount') }}</span><input name="salary_amount" type="number" step="0.5" min="0" class="inp num"></label>
+        </div>
+        <label class="field"><span class="label">{{ t('w_login_code') }}</span>
+          <input name="code" inputmode="numeric" pattern="\d{4,8}" placeholder="{{ t('w_code_auto') }}" class="inp num tracking-[.12em]"></label>
+        <label class="check"><input type="checkbox" name="active" checked> {{ t('coach_active') }}</label>
+        <button class="btn btn-ink btn-block">{{ t('save') }}</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COPIED = {{ t('w_code_copied')|tojson }}, AGO = {{ {'now': t('w_ago_now'), 'm': t('w_ago_m'), 'h': t('w_ago_h'), 'd': t('w_ago_d')}|tojson }};
+function copyCode(c){ (navigator.clipboard ? navigator.clipboard.writeText(c) : Promise.reject()).catch(()=>{}).finally(()=>toast(COPIED)); }
+document.querySelectorAll('[data-ago]').forEach(el => {
+  const v = el.dataset.ago; if (!v) return;
+  const s = (Date.now() - new Date(v).getTime()) / 1000; if (isNaN(s)) return;
+  el.textContent = s < 60 ? AGO.now : s < 3600 ? AGO.m.replace('{n}', Math.floor(s/60))
+    : s < 86400 ? AGO.h.replace('{n}', Math.floor(s/3600)) : s < 86400*30 ? AGO.d.replace('{n}', Math.floor(s/86400)) : v.slice(0,10);
+});
+</script>
+{% endblock %}

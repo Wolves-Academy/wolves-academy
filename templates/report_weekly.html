@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import money, dmon %}
+{% block title %}{{ t('w_weekly_report') }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <div class="flex items-end gap-3 flex-wrap">
+    <div class="min-w-0">
+      <a href="/analytics" class="sub hover:text-ink no-print">{{ t('nav_analytics') }}</a>
+      <h1 class="h-page mt-1">{{ t('w_week_of', a=dmon(rep.start, lang), b=dmon(rep.end, lang)) }}</h1>
+      <div class="sub mt-1 num">{{ rep.start[:4] }}</div>
+    </div>
+    <div class="ms-auto flex gap-2 no-print">
+      <a href="/reports/weekly?week={{ prev }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_prev_week') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></a>
+      {% if not is_current %}<a href="/reports/weekly" class="btn btn-line btn-sm">{{ t('w_this_week') }}</a>{% endif %}
+      <a href="/reports/weekly?week={{ next }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_next_week') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></a>
+    </div>
+  </div>
+
+  <!-- money -->
+  <section class="statement">
+    <div class="ledger" style="--cols:3">
+      <div>
+        <div class="k">{{ t('w_money_in') }}</div>
+        <div class="v mid num ok-hi">{{ money(rep.money_in) }}<span class="u">JD</span></div>
+        <div class="s num">{{ t('w_payments_n', n=rep.payments) }}{% if rep.events_in %} · {{ t('w_events_in', n=money(rep.events_in)) }}{% endif %}</div>
+      </div>
+      <div>
+        <div class="k">{{ t('w_money_out') }}</div>
+        <div class="v mid num bad-hi">{{ money(rep.money_out) }}<span class="u">JD</span></div>
+        <div class="s num">{{ t('fin_salaries') }} {{ money(rep.salaries) }} · {{ t('fin_other') }} {{ money(rep.spent) }}</div>
+      </div>
+      <div>
+        <div class="k">{{ t('w_net') }}</div>
+        <div class="v mid num {{ 'ok-hi' if rep.net >= 0 else 'bad-hi' }}">{{ '+' if rep.net > 0 }}{{ money(rep.net) }}<span class="u">JD</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="grid gap-4 lg:gap-5 lg:grid-cols-2 items-start">
+    <!-- attendance -->
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('nav_attendance') }}</h2>
+        <span class="meta num">{{ rep.rate if rep.rate is not none else '-' }}{% if rep.rate is not none %}%{% endif %}</span></div>
+      <div class="ledger" style="--cols:3">
+        <div><div class="k">{{ t('present_word') }}</div><div class="v mid num text-ok">{{ rep.present }}</div></div>
+        <div><div class="k">{{ t('absent_word') }}</div><div class="v mid num text-bad">{{ rep.absent }}</div></div>
+        <div><div class="k">{{ t('w_excused') }}</div><div class="v mid num">{{ rep.excused }}</div></div>
+      </div>
+      <div class="rows ledger-rule">
+        {% for g in rep.groups %}
+        <div class="row" style="min-height:44px">
+          <span class="w-32 shrink-0 truncate font-semibold">{{ g.name_ar if lang == 'ar' else g.name_en }}</span>
+          <div class="bar flex-1"><i style="width: {{ g.rate or 0 }}%"></i></div>
+          <span class="num w-24 text-end sub">{{ g.present }}/{{ g.present + g.absent }} · {{ g.rate if g.rate is not none else '-' }}%</span>
+        </div>
+        {% else %}<div class="empty">{{ t('w_no_attendance') }}</div>{% endfor %}
+      </div>
+    </section>
+
+    <!-- the week in numbers -->
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('w_week_numbers') }}</h2></div>
+      <div class="rows">
+        <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_sessions_held') }}</span><span class="num font-bold">{{ rep.held|length }}</span></div>
+        <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_cancelled') }}</span>
+          <span class="sub">{% for d in rep.cancelled %}{{ dmon(d, lang) }}{{ ', ' if not loop.last }}{% else %}-{% endfor %}</span></div>
+        <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_new_players') }}</span><span class="num font-bold">{{ rep.new_players }}</span></div>
+        <a href="/reports/trials" class="row" style="min-height:44px"><span class="flex-1">{{ t('w_trials') }}</span><span class="num font-bold">{{ rep.trials }}</span></a>
+        <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_unpaid_marks') }}</span><span class="num font-bold {{ 'text-bad' if rep.unpaid }}">{{ rep.unpaid }}</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- coaches -->
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_coach_days') }}</h2></div>
+    <div class="rows">
+      {% for c in rep.coaches %}
+      <div class="row" style="min-height:44px"><span class="flex-1 font-semibold">{{ c.name }}</span>
+        <span class="num {{ 'text-dim' if not c.days }}">{{ t('w_days_n', n=c.days) }}</span></div>
+      {% else %}<div class="empty">{{ t('no_coaches') }}</div>{% endfor %}
+    </div>
+  </section>
+
+  <!-- share -->
+  <section class="sheet no-print">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_share') }}</h2></div>
+    <pre id="repText" class="sheet-bd whitespace-pre-wrap text-sm" dir="rtl">{{ rep.text }}</pre>
+    <div class="sheet-ft flex-wrap">
+      <button type="button" class="btn btn-ink btn-sm" onclick="copyReport()">{{ icon('file','w-4 h-4') }}{{ t('copy_whatsapp') }}</button>
+      <a class="btn btn-wa btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text={{ rep.text|urlencode }}">{{ icon('whatsapp','w-4 h-4') }}{{ t('whatsapp') }}</a>
+      <button type="button" class="btn btn-line btn-sm" onclick="print()">{{ icon('printer','w-4 h-4') }}{{ t('w_print') }}</button>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyReport(){
+  const text = document.getElementById('repText').textContent;
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }).finally(() => toast({{ t('copied_note')|tojson }}));
+}
+</script>
+{% endblock %}

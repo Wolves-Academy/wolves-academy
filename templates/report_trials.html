@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import dmon %}
+{% block title %}{{ t('w_trials_report') }}{% endblock %}
+{% block content %}
+<div class="stack">
+  <div class="min-w-0">
+    <a href="/analytics" class="sub hover:text-ink">{{ t('nav_analytics') }}</a>
+    <h1 class="h-page mt-1">{{ t('w_trials_report') }}</h1>
+    <div class="sub mt-1">{{ t('w_trials_sub') }}</div>
+  </div>
+
+  <section class="statement">
+    <div class="ledger" style="--cols:4">
+      <div><div class="k">{{ t('w_trials') }}</div><div class="v mid num">{{ rep.total }}</div></div>
+      <div><div class="k">{{ t('w_joined') }}</div><div class="v mid num ok-hi">{{ rep.joined }}</div></div>
+      <div><div class="k">{{ t('w_waiting') }}</div><div class="v mid num warn-hi">{{ rep.waiting }}</div></div>
+      <div><div class="k">{{ t('w_conversion') }}</div><div class="v mid num hi">{{ rep.rate if rep.rate is not none else '-' }}{% if rep.rate is not none %}<span class="u">%</span>{% endif %}</div></div>
+    </div>
+  </section>
+
+  <div class="chips" role="tablist">
+    {% for k, n in [('all', rep.total), ('waiting', rep.waiting), ('joined', rep.joined), ('left', rep.left)] %}
+    <button type="button" class="da-tab {{ 'on' if k == 'all' }}" data-f="{{ k }}" onclick="filterTrials('{{ k }}')">{{ t('w_f_' ~ k) }} <span class="n">{{ n }}</span></button>
+    {% endfor %}
+  </div>
+
+  <section class="sheet">
+    <div class="rows" id="trialRows">
+      {% for r in rep.rows %}
+      <div class="row stack-sm" data-outcome="{{ r.outcome }}">
+        <a href="/players/{{ r.pid }}" class="flex-1 min-w-0">
+          <div class="font-bold truncate">{{ r.full_name }}</div>
+          <div class="sub mt-0.5">{{ dmon(r.session_date, lang) }} <span class="num">{{ r.session_date[:4] }}</span>
+            · {{ (r.group_ar if lang == 'ar' else r.group_en) or '-' }}{% if r.school %} · {{ r.school }}{% endif %}{% if r.marked_by %} · {{ r.marked_by }}{% endif %}</div>
+        </a>
+        <div class="end">
+          {% if r.outcome == 'joined' %}<span class="tag tag-ok">{{ t('w_joined') }}{% if r.joined_on %} {{ dmon(r.joined_on, lang) }}{% endif %}</span>
+          {% elif r.outcome == 'waiting' %}<span class="tag tag-warn">{{ t('w_waiting_days', n=r.days_since) }}</span>
+          {% else %}<span class="tag tag-mute">{{ t('w_f_left') }}</span>{% endif %}
+        </div>
+      </div>
+      {% else %}<div class="empty">{{ t('w_no_trials') }}</div>{% endfor %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterTrials(k){
+  document.querySelectorAll('[data-f]').forEach(b => b.classList.toggle('on', b.dataset.f === k));
+  document.querySelectorAll('#trialRows [data-outcome]').forEach(r => r.style.display = (k === 'all' || r.dataset.outcome === k) ? '' : 'none');
+}
+</script>
+{% endblock %}
