@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#EEF0F3" id="themeColor">
 <title>{% block title %}Wolves Sports Academy{% endblock %} · Wolves Sports Academy</title>
-<link rel="icon" type="image/png" href="/static/logo-mark.png">
+<link rel="icon" type="image/png" href="/static/icon-192.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Wolves">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -382,6 +388,16 @@ tailwind.config = { theme: { extend: {
 {% endif %}
 
 <main class="page"><div class="wrap">
+<!-- install as an app (Android: native prompt, iPhone: Share > Add to Home Screen) -->
+<div id="installBar" class="sheet hidden mb-4 flex items-center gap-3 px-3 py-2.5">
+  <img src="/static/icon-192.png" alt="" class="w-10 h-10 rounded-lg shrink-0">
+  <div class="flex-1 min-w-0">
+    <div class="font-bold text-[14px]">{{ t('w_install_title') }}</div>
+    <div class="sub" id="installHint">{{ t('w_install_sub') }}</div>
+  </div>
+  <button id="installBtn" class="btn btn-acc btn-sm hidden">{{ t('w_install_btn') }}</button>
+  <button id="installClose" class="btn btn-quiet btn-sm btn-icon" aria-label="{{ t('close') }}">{{ icon('x','w-4 h-4') }}</button>
+</div>
 {% block content %}{% endblock %}
 </div></main>
 
@@ -437,6 +453,25 @@ tailwind.config = { theme: { extend: {
   document.addEventListener('click', e => { if(e.target.classList && e.target.classList.contains('ovl') && e.target.id!=='botOvl') e.target.classList.remove('open'); });
   // close any open <details> menu when clicking outside it
   document.addEventListener('click', e => { document.querySelectorAll('details.relative[open]').forEach(d => { if(!d.contains(e.target)) d.removeAttribute('open'); }); });
+  // installable app: register the service worker and offer "Install" once per device
+  (function(){
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    let snoozed = false; try { snoozed = Date.now() < +(localStorage.getItem('installSnooze') || 0); } catch(e) {}
+    if (standalone || snoozed) return;
+    const bar = document.getElementById('installBar'), btn = document.getElementById('installBtn');
+    document.getElementById('installClose').onclick = () => { bar.classList.add('hidden');
+      try { localStorage.setItem('installSnooze', Date.now() + 14 * 864e5); } catch(e) {} };
+    let deferred = null;
+    window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e;
+      btn.classList.remove('hidden'); bar.classList.remove('hidden'); });
+    btn.onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; bar.classList.add('hidden'); };
+    window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
+      document.getElementById('installHint').textContent = {{ t('w_install_ios')|tojson }};
+      bar.classList.remove('hidden');
+    }
+  })();
   // tallies fill box by box (the scorer's pen)
   document.querySelectorAll('.tally-anim').forEach(t => t.querySelectorAll('i').forEach((b,i)=>b.style.setProperty('--i', i)));
 </script>

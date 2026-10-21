@@ -35,3 +35,8 @@ AR = {
 
 EN["w_days_month"] = "Days this month"
 AR["w_days_month"] = "أيام هالشهر"
+
+EN.update({"w_install_title": "Install Wolves on your phone", "w_install_sub": "Opens like an app, full screen, from your home screen.",
+           "w_install_btn": "Install", "w_install_ios": "Tap the Share button, then Add to Home Screen."})
+AR.update({"w_install_title": "نزّل تطبيق Wolves على تلفونك", "w_install_sub": "بيفتح زي التطبيق، شاشة كاملة، من الشاشة الرئيسية.",
+           "w_install_btn": "تنزيل", "w_install_ios": "اكبس زر المشاركة، بعدين إضافة إلى الشاشة الرئيسية."})

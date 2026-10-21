@@ -112,6 +112,20 @@ def require_role(*roles):
     return deco
 
 
+@app.route("/sw.js")
+def service_worker():
+    """Served from the root so it controls the whole app (installable PWA)."""
+    resp = send_file(os.path.join(BASE_DIR, "static", "sw.js"), mimetype="text/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    return send_file(os.path.join(BASE_DIR, "static", "manifest.webmanifest"), mimetype="application/manifest+json")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
