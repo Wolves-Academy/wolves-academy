@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import initials %}
+{% block title %}{{ t('w_ci_title') }}{% endblock %}
+{% block content %}
+<div class="stack max-w-[920px]">
+  <div class="flex items-end gap-3 flex-wrap">
+    <div class="min-w-0">
+      <h1 class="h-page">{{ t('w_ci_title') }}</h1>
+      <div class="sub mt-1">{{ t('w_ci_sub') }}</div>
+    </div>
+    <a href="/coaches" class="btn btn-line btn-sm ms-auto">{{ icon('users','w-4 h-4') }}{{ t('w_coaches') }}</a>
+  </div>
+
+  <div class="grid lg:grid-cols-[1fr_1fr] gap-4 lg:gap-5 items-start">
+    <!-- option 1: court QR -->
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('w_ci_qr') }}</h2><span class="meta num" id="qrTimer"></span></div>
+      <div class="sheet-bd grid place-items-center gap-3">
+        <div class="bg-white rounded-xl p-3 w-full max-w-[320px] aspect-square grid place-items-center">
+          <img id="qrImg" alt="{{ t('w_ci_qr') }}" class="w-full h-full">
+        </div>
+        <p class="sub text-center">{{ t('w_ci_qr_hint', m=minutes) }}</p>
+      </div>
+    </section>
+
+    <!-- option 2: WhatsApp link per coach + who is in -->
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('w_ci_wa') }}</h2></div>
+      <div class="rows">
+        {% for c in coaches %}
+        <div class="row">
+          {{ initials(c.name) }}
+          <div class="flex-1 min-w-0">
+            <div class="font-bold truncate">{{ c.name }}</div>
+            <div class="sub" data-in="{{ c.id }}">{{ t('w_not_in') }}</div>
+          </div>
+          <span class="end">
+            {% if c.phone %}
+            <a href="/coaches/{{ c.id }}/wa-checkin" target="_blank" rel="noopener" class="btn btn-wa btn-sm btn-icon"
+               title="{{ t('w_ci_send') }}" aria-label="{{ t('w_ci_send') }} {{ c.name }}">{{ icon('whatsapp','w-4 h-4') }}</a>
+            {% else %}<span class="sub">{{ t('no_number') }}</span>{% endif %}
+          </span>
+        </div>
+        {% else %}<div class="empty">{{ t('no_coaches') }}</div>{% endfor %}
+      </div>
+      <div class="sheet-ft sub">{{ t('w_ci_wa_hint') }}</div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const IN_AT = {{ t('w_in_at')|tojson }}, NOT_IN = {{ t('w_not_in')|tojson }};
+const VIA = {{ {'qr': t('w_via_qr'), 'whatsapp': t('w_via_wa'), 'admin': t('w_via_admin')}|tojson }};
+let left = 60;
+async function refreshQr(){
+  const r = await fetch('/api/checkin/qr'); if (!r.ok) return;
+  const d = await r.json();
+  document.getElementById('qrImg').src = d.qr;
+  document.querySelectorAll('[data-in]').forEach(el => { el.textContent = NOT_IN; el.classList.remove('text-ok', 'font-semibold'); });
+  d.in.forEach(c => { const el = document.querySelector(`[data-in="${c.id}"]`); if (!el) return;
+    el.textContent = IN_AT.replace('{t}', c.check_in || '-') + (VIA[c.method] ? ' · ' + VIA[c.method] : '');
+    el.classList.add('text-ok', 'font-semibold'); });
+  left = 60;
+}
+// a fresh code every minute, so a photo of the screen can't be reused later
+setInterval(() => { left--; document.getElementById('qrTimer').textContent = left + 's'; if (left <= 0) refreshQr(); }, 1000);
+refreshQr();
+</script>
+{% endblock %}

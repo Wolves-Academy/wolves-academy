@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_logo.html" import logo %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('w_ci_title') }}{% endblock %}
+{% block content %}
+<div class="min-h-[70vh] flex flex-col items-center justify-center fade-in">
+  <div class="w-full max-w-[380px] text-center">
+    {{ logo('w-[96px] mx-auto') }}
+    <div class="sheet mt-6">
+      <div class="sheet-bd !p-6 grid gap-3 justify-items-center">
+        {% if state == 'expired' %}
+          <span class="text-bad">{{ icon('alert','w-8 h-8') }}</span>
+          <div class="font-bold text-[18px]">{{ t('w_ci_expired') }}</div>
+          <div class="sub">{{ t('w_ci_expired_sub') }}</div>
+        {% elif state == 'done' %}
+          <span class="text-ok">{{ icon('check','w-8 h-8') }}</span>
+          <div class="font-bold text-[18px]">{{ t('w_checked_in') }}</div>
+          <div class="sub">{{ coach.name }}{% if check_in %} · {{ t('w_checked_in_at', t=check_in) }}{% endif %}</div>
+          {% if role == 'coach' %}<a href="/attendance" class="btn btn-ink btn-block mt-2">{{ t('nav_attendance') }}</a>{% endif %}
+        {% else %}
+          <div class="font-bold text-[18px]">{{ t('w_hi_name', n=coach.name) }}</div>
+          <div class="sub">{{ t('w_checkin_sub') }}</div>
+          <form method="post" class="w-full mt-2">
+            <button class="btn btn-acc btn-block !h-14 !text-[17px]">{{ icon('check','w-5 h-5') }}{{ t('w_checkin_btn') }}</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script>_syncTheme();</script>{% endblock %}

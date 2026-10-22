@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS groups (
     max_age INTEGER DEFAULT 99,
     gender TEXT DEFAULT 'mixed',
     schedule_days TEXT DEFAULT 'Sun/Tue/Thu',
-    time_slot TEXT DEFAULT ''
+    time_slot TEXT DEFAULT '',
+    wa_link TEXT DEFAULT ''                -- WhatsApp group invite link
 );
 CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +142,15 @@ CREATE TABLE IF NOT EXISTS coach_attendance (
     coach_id INTEGER NOT NULL REFERENCES coaches(id),
     session_date TEXT NOT NULL,
     check_in TEXT,                         -- time the coach checked in (HH:MM)
+    method TEXT DEFAULT '',                -- qr / whatsapp / admin
     UNIQUE(coach_id, session_date)
+);
+CREATE TABLE IF NOT EXISTS checkin_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    coach_id INTEGER REFERENCES coaches(id), -- NULL = court QR for any coach, else that coach's WhatsApp link
+    expires TEXT NOT NULL,
+    used_at TEXT
 );
 CREATE TABLE IF NOT EXISTS coach_logins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,6 +349,10 @@ def _migrate(con):
     acols = _columns(con, "attendance")
     if "trial" not in acols:
         con.execute("ALTER TABLE attendance ADD COLUMN trial INTEGER DEFAULT 0")
+    if "wa_link" not in _columns(con, "groups"):
+        con.execute("ALTER TABLE groups ADD COLUMN wa_link TEXT DEFAULT ''")
+    if "method" not in _columns(con, "coach_attendance"):
+        con.execute("ALTER TABLE coach_attendance ADD COLUMN method TEXT DEFAULT ''")
     scols = _columns(con, "subscriptions")
     if "paused_days" not in scols:
         con.execute("ALTER TABLE subscriptions ADD COLUMN paused_days INTEGER DEFAULT 0")
@@ -1263,14 +1276,42 @@ def record_coach_login(con, coach_id, ip=""):
     con.commit()
 
 
-def coach_check_in(con, coach_id, on=None):
+def coach_check_in(con, coach_id, on=None, method=""):
     """Mark the coach as worked on a date (idempotent). Returns True if new."""
     on = on or today_str()
     t = datetime.now().strftime("%H:%M") if on == today_str() else None
-    cur = con.execute("INSERT OR IGNORE INTO coach_attendance (coach_id, session_date, check_in) VALUES (?,?,?)",
-                      (coach_id, on, t))
+    cur = con.execute("INSERT OR IGNORE INTO coach_attendance (coach_id, session_date, check_in, method) "
+                      "VALUES (?,?,?,?)", (coach_id, on, t, method))
     con.commit()
     return cur.rowcount > 0
+
+
+QR_TOKEN_MINUTES = 5   # the court QR rotates every minute; a photo of it dies within 5
+
+
+def new_checkin_token(con, coach_id=None):
+    """Court QR token (coach_id None, short-lived) or a coach's WhatsApp link
+    (valid until midnight, single use)."""
+    import secrets
+    now = datetime.now()
+    if coach_id is None:
+        exp = now + timedelta(minutes=QR_TOKEN_MINUTES)
+    else:
+        exp = datetime.combine(now.date(), datetime.max.time())
+    tok = secrets.token_urlsafe(16)
+    con.execute("DELETE FROM checkin_tokens WHERE expires < ?", (now.isoformat(timespec="seconds"),))
+    con.execute("INSERT INTO checkin_tokens (token, coach_id, expires) VALUES (?,?,?)",
+                (tok, coach_id, exp.isoformat(timespec="seconds")))
+    con.commit()
+    return tok
+
+
+def checkin_token(con, token):
+    """The token row if it can still be used, else None."""
+    row = con.execute("SELECT * FROM checkin_tokens WHERE token=?", ((token or "")[:64],)).fetchone()
+    if not row or row["used_at"] or row["expires"] < datetime.now().isoformat(timespec="seconds"):
+        return None
+    return row
 
 
 def cancel_session(con, on, note="", settings=None):
@@ -1371,6 +1412,64 @@ def weekly_report(con, start=None, settings=None):
         f"حضور: {p} · غياب: {ab}" + (f" · نسبة الحضور {rep['rate']}%" if rep["rate"] is not None else ""),
         f"لاعبين جدد: {new_players} · حصص تجريبية: {rep['trials']}",
         f"دخل: {money_in:g} دينار · مصاريف: {money_out:g} دينار · الصافي: {rep['net']:g} دينار",
+    ])
+    return rep
+
+
+def month_report(con, month=None, settings=None):
+    """Month-end close: money in/out, every coach's days and salary still to hand
+    over, attendance, players, and who still owes money."""
+    settings = settings or get_settings()
+    month = month or date.today().strftime("%Y-%m")
+    first, last = month_bounds(month)
+    a, b = first.isoformat(), last.isoformat()
+    fin = finance(con, month, settings)
+    pays = con.execute("SELECT COUNT(*) n FROM payments WHERE date BETWEEN ? AND ?", (a, b)).fetchone()["n"]
+    paid_out = round(con.execute("SELECT COALESCE(SUM(amount),0) s FROM salary_payouts WHERE month=?",
+                                 (month,)).fetchone()["s"], 2)
+    coaches = []
+    for c in con.execute("SELECT * FROM coaches WHERE active=1 ORDER BY name").fetchall():
+        via = {r["m"] or "admin": r["n"] for r in con.execute(
+            "SELECT method m, COUNT(*) n FROM coach_attendance WHERE coach_id=? AND session_date BETWEEN ? AND ? "
+            "GROUP BY method", (c["id"], a, b)).fetchall()}
+        coaches.append({"id": c["id"], "name": c["name"], "salary_type": c["salary_type"],
+                        "rate": c["salary_amount"], "days": sum(via.values()), "via": via,
+                        "salary": salary_status(con, c, month)})
+    att = con.execute("SELECT SUM(status='present') p, SUM(status='absent') ab, SUM(COALESCE(trial,0)) tr "
+                      "FROM attendance WHERE session_date BETWEEN ? AND ?", (a, b)).fetchone()
+    p, ab = att["p"] or 0, att["ab"] or 0
+    groups = []
+    for g in con.execute("SELECT * FROM groups ORDER BY id").fetchall():
+        r = con.execute("SELECT SUM(status='present') p, SUM(status='absent') ab FROM attendance "
+                        "WHERE group_id=? AND session_date BETWEEN ? AND ?", (g["id"], a, b)).fetchone()
+        gp, gab = r["p"] or 0, r["ab"] or 0
+        if gp or gab:
+            groups.append({"name_en": g["name_en"], "name_ar": g["name_ar"], "present": gp, "absent": gab,
+                           "rate": round(gp * 100 / (gp + gab)) if (gp + gab) else None})
+    cancelled = sorted(c["date"] for c in (settings.get("closed_days") or [])
+                       if isinstance(c, dict) and a <= c.get("date", "") <= b)
+    owed = money_owed(con, settings)
+    salary_left = round(sum(c["salary"]["left"] for c in coaches), 2)
+    rep = {"month": month, "start": a, "end": b, "fin": fin, "payments": pays, "salary_paid": paid_out,
+           "salary_left": salary_left, "coaches": coaches,
+           "categories": expenses_by_category(con, month, settings),
+           "sessions": month_sessions(month, settings), "cancelled": cancelled,
+           "present": p, "absent": ab, "trials": att["tr"] or 0,
+           "rate": round(p * 100 / (p + ab)) if (p + ab) else None, "groups": groups,
+           "active_players": con.execute("SELECT COUNT(*) c FROM players WHERE status='active'").fetchone()["c"],
+           "new_players": con.execute("SELECT COUNT(*) c FROM players WHERE join_date BETWEEN ? AND ? "
+                                      "AND status!='pending'", (a, b)).fetchone()["c"],
+           "owed": owed}
+    # the close checklist: what still needs doing before the month is done
+    rep["todo"] = {"salaries": salary_left <= 0, "owed": owed["total"] <= 0}
+    rep["text"] = "\n".join([
+        f"Wolves Sports Academy - تقرير شهر {first.strftime('%m/%Y')}",
+        f"حصص: {rep['sessions']}" + (f" (ملغية: {len(cancelled)})" if cancelled else ""),
+        f"حضور: {p} · غياب: {ab}" + (f" · نسبة الحضور {rep['rate']}%" if rep["rate"] is not None else ""),
+        f"لاعبين فعالين: {rep['active_players']} · جدد: {rep['new_players']} · تجريبي: {rep['trials']}",
+        f"دخل: {fin['revenue']:g} دينار · مصاريف: {fin['expenses']:g} دينار · الصافي: {fin['profit']:g} دينار",
+        f"رواتب المدربين: {fin['salaries']:g} دينار (انصرف {paid_out:g}، باقي {salary_left:g})",
+        f"ذمم على اللاعبين: {owed['total']:g} دينار",
     ])
     return rep
 

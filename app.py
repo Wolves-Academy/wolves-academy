@@ -146,7 +146,8 @@ def login():
             session.clear()
             session.update(role="coach", coach_id=coach["id"], coach_code=coach["code"], coach_name=coach["name"])
             session.permanent = True
-            return redirect(url_for("attendance_page"))
+            nxt = request.args.get("next") or ""
+            return redirect(nxt if nxt.startswith("/checkin/") else url_for("attendance_page"))
         con.close()
         error = translate(current_lang(), "wrong_pin")
     return render_template("login.html", error=error)
@@ -840,8 +841,6 @@ def api_attendance_mark():
     result = db.mark_attendance(
         con, int(data["player_id"]), data["date"], int(data["group_id"]),
         data["status"], marked_by=marker())
-    if current_coach_id():
-        db.coach_check_in(con, current_coach_id(), data["date"])
     # return fresh sessions-left for the badge
     p = con.execute("SELECT * FROM players WHERE id=?", (int(data["player_id"]),)).fetchone()
     info = player_sub_info(con, p)
@@ -867,8 +866,6 @@ def api_attendance_mark_all():
     for p in players:
         if existing.get(p["id"]) != "present":
             db.mark_attendance(con, p["id"], sdate, gid, "present", marked_by=marker())
-    if current_coach_id():
-        db.coach_check_in(con, current_coach_id(), sdate)
     con.close()
     return jsonify({"ok": True})
 
@@ -1070,6 +1067,12 @@ def closed_days_save():
     return redirect(url_for("settings_page") + "#schedule")
 
 
+def _wa_group_link(v):
+    """Keep only https WhatsApp links (group invites / wa.me); anything else is dropped."""
+    v = (v or "").strip()
+    return v[:300] if re.match(r"^https://(chat\.whatsapp\.com|wa\.me)/[\w/?=&.-]+$", v) else ""
+
+
 @app.route("/groups/save", methods=["POST"])
 @require_role("admin")
 def groups_save():
@@ -1079,12 +1082,13 @@ def groups_save():
     vals = (f.get("name_ar", "").strip(), f.get("name_en", "").strip(),
             int(f.get("min_age") or 0), int(f.get("max_age") or 99),
             f.get("gender") or "mixed", f.get("schedule_days") or "Sun/Tue/Thu",
-            f.get("time_slot") or "")
+            f.get("time_slot") or "", _wa_group_link(f.get("wa_link")))
     if gid:
-        con.execute("UPDATE groups SET name_ar=?,name_en=?,min_age=?,max_age=?,gender=?,schedule_days=?,time_slot=? WHERE id=?",
-                    vals + (gid,))
+        con.execute("UPDATE groups SET name_ar=?,name_en=?,min_age=?,max_age=?,gender=?,schedule_days=?,time_slot=?,wa_link=? "
+                    "WHERE id=?", vals + (gid,))
     else:
-        con.execute("INSERT INTO groups (name_ar,name_en,min_age,max_age,gender,schedule_days,time_slot) VALUES (?,?,?,?,?,?,?)", vals)
+        con.execute("INSERT INTO groups (name_ar,name_en,min_age,max_age,gender,schedule_days,time_slot,wa_link) "
+                    "VALUES (?,?,?,?,?,?,?,?)", vals)
     con.commit()
     con.close()
     return redirect(f.get("back") or url_for("groups_page"))
@@ -1395,17 +1399,87 @@ def coach_detail(cid):
                            code_error=request.args.get("code_error"))
 
 
-@app.route("/api/coach/check-in", methods=["POST"])
-@require_role("coach")
-def api_coach_check_in():
-    """The coach taps 'I'm on court' (also happens on their first attendance mark)."""
+# ---- coach check-in: scan the court QR on the admin's screen, or tap a WhatsApp link ----
+
+def _qr_svg_uri(text):
+    import base64
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _checked_in_today(con):
+    return [dict(r) for r in con.execute(
+        "SELECT c.id, c.name, ca.check_in, ca.method FROM coach_attendance ca JOIN coaches c ON c.id=ca.coach_id "
+        "WHERE ca.session_date=? ORDER BY ca.check_in", (date.today().isoformat(),)).fetchall()]
+
+
+@app.route("/coaches/checkin")
+@require_role("admin")
+def coach_checkin_page():
+    """Admin screen with the rotating court QR + a WhatsApp link per coach."""
     con = db.get_db()
-    on = date.today().isoformat()
-    db.coach_check_in(con, current_coach_id(), on)
-    row = con.execute("SELECT check_in FROM coach_attendance WHERE coach_id=? AND session_date=?",
-                      (current_coach_id(), on)).fetchone()
+    coaches = con.execute("SELECT * FROM coaches WHERE active=1 ORDER BY name").fetchall()
     con.close()
-    return jsonify({"ok": True, "check_in": row["check_in"] if row else None})
+    return render_template("coach_checkin.html", coaches=coaches, minutes=db.QR_TOKEN_MINUTES)
+
+
+@app.route("/api/checkin/qr")
+@require_role("admin")
+def api_checkin_qr():
+    con = db.get_db()
+    url = f"{coach_access_url()}/checkin/{db.new_checkin_token(con)}"
+    inn = _checked_in_today(con)
+    con.close()
+    return jsonify({"qr": _qr_svg_uri(url), "in": inn})
+
+
+@app.route("/coaches/<int:cid>/wa-checkin")
+@require_role("admin")
+def coach_wa_checkin(cid):
+    """Open WhatsApp with a one-time link that checks this coach in today."""
+    con = db.get_db()
+    c = con.execute("SELECT * FROM coaches WHERE id=? AND active=1", (cid,)).fetchone()
+    if not c or not c["phone"]:
+        con.close()
+        abort(404)
+    url = f"{coach_access_url()}/checkin/{db.new_checkin_token(con, cid)}"
+    con.close()
+    return redirect(wa_link(c["phone"], translate(current_lang(), "w_wa_checkin_msg", n=c["name"], u=url)))
+
+
+@app.route("/checkin/<token>", methods=["GET", "POST"])
+def checkin_link(token):
+    con = db.get_db()
+    tok = db.checkin_token(con, token)
+    if not tok:
+        con.close()
+        return render_template("checkin.html", state="expired")
+    cid = tok["coach_id"]
+    if cid is None:                       # court QR: the scanning coach must be signed in
+        if current_role() != "coach":
+            con.close()
+            return redirect(url_for("login", next=request.path))
+        cid = current_coach_id()
+    coach = con.execute("SELECT * FROM coaches WHERE id=? AND active=1", (cid,)).fetchone()
+    if not coach:
+        con.close()
+        return render_template("checkin.html", state="expired")
+    today = date.today().isoformat()
+    if request.method == "POST":
+        db.coach_check_in(con, cid, today, "whatsapp" if tok["coach_id"] else "qr")
+        if tok["coach_id"]:
+            con.execute("UPDATE checkin_tokens SET used_at=? WHERE id=?",
+                        (datetime.now().isoformat(timespec="seconds"), tok["id"]))
+            con.commit()
+    row = con.execute("SELECT check_in FROM coach_attendance WHERE coach_id=? AND session_date=?",
+                      (cid, today)).fetchone()
+    con.close()
+    return render_template("checkin.html", state="done" if row else "ready", coach=coach,
+                           check_in=row["check_in"] if row else None)
 
 
 @app.route("/api/coach/me")
@@ -1468,7 +1542,8 @@ def coach_pay(cid):
                          f.get("method") or "cash"))
             con.commit()
     con.close()
-    return redirect(url_for("finance_page", month=month) + "#coaches")
+    back = f.get("back") or ""
+    return redirect(back if back.startswith("/reports/") else url_for("finance_page", month=month) + "#coaches")
 
 
 @app.route("/salary/<int:sid>/delete", methods=["POST"])
@@ -1509,7 +1584,7 @@ def coach_present(cid):
         con.execute("DELETE FROM coach_attendance WHERE id=?", (row["id"],))
         present = False
     else:
-        con.execute("INSERT INTO coach_attendance (coach_id, session_date) VALUES (?,?)", (cid, today))
+        con.execute("INSERT INTO coach_attendance (coach_id, session_date, method) VALUES (?,?,'admin')", (cid, today))
         present = True
     con.commit()
     con.close()
@@ -1638,6 +1713,22 @@ def report_weekly():
                            prev=(start - timedelta(days=7)).isoformat(),
                            next=(start + timedelta(days=7)).isoformat(),
                            is_current=start == db.week_start())
+
+
+@app.route("/reports/month")
+@require_role("admin")
+def report_month():
+    month = (request.args.get("month") or date.today().strftime("%Y-%m"))[:7]
+    if not re.match(r"^\d{4}-\d{2}$", month):
+        month = date.today().strftime("%Y-%m")
+    con = db.get_db()
+    rep = db.month_report(con, month)
+    with_owed_wa(rep["owed"])
+    con.close()
+    first = date.fromisoformat(month + "-01")
+    return render_template("report_month.html", rep=rep,
+                           prev=_shift_month(first, -1).strftime("%Y-%m"), next=_shift_month(first, 1).strftime("%Y-%m"),
+                           is_current=month == date.today().strftime("%Y-%m"))
 
 
 @app.route("/reports/trials")

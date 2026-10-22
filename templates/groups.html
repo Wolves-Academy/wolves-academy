@@ -24,6 +24,9 @@
   <label class="field"><span class="label">{{ t('time_slot') }}</span>
     <input name="time_slot" value="{{ g.time_slot if g else '' }}" class="inp num" placeholder="4:00-5:30"></label>
 </div>
+<label class="field"><span class="label">{{ t('w_grp_wa') }}</span>
+  <input name="wa_link" type="url" dir="ltr" value="{{ g.wa_link if g and g.wa_link else '' }}" class="inp"
+         placeholder="https://chat.whatsapp.com/..." pattern="https://(chat\.whatsapp\.com|wa\.me)/.+"></label>
 {% endmacro %}
 {% block content %}
 <div class="stack max-w-[820px]">
@@ -49,6 +52,8 @@
             <div class="sub num mt-0.5">{{ g.time_slot or '-' }} · {{ g.schedule_days }} · {{ t('mixed') if g.gender=='mixed' else (t('males') if g.gender=='M' else t('females')) }} · {{ g.min_age }}-{{ g.max_age }}</div>
           </div>
           <span class="end">
+            {% if g.wa_link %}<a href="{{ g.wa_link }}" target="_blank" rel="noopener" class="btn btn-wa btn-sm btn-icon" onclick="event.stopPropagation()"
+               title="{{ t('w_grp_wa_open') }}" aria-label="{{ t('w_grp_wa_open') }}">{{ icon('whatsapp','w-4 h-4') }}</a>{% endif %}
             <a href="/players?group={{ g.id }}" class="da-tab" onclick="event.stopPropagation()">{{ t('players_in_group', n=g.player_count) }}</a>
             <span class="text-faint">{{ icon('edit','w-3.5 h-3.5') }}</span>
           </span>

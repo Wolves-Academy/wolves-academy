@@ -19,7 +19,8 @@
       <h1 class="h-page">{{ t('w_coaches') }}</h1>
       <div class="sub mt-1">{{ t('w_coaches_sub') }}</div>
     </div>
-    <button class="btn btn-ink btn-sm ms-auto" onclick="openSheet('addCoach')">{{ icon('plus','w-4 h-4') }}{{ t('add_coach') }}</button>
+    <a href="/coaches/checkin" class="btn btn-line btn-sm ms-auto">{{ icon('qr','w-4 h-4') }}{{ t('w_ci_title') }}</a>
+    <button class="btn btn-ink btn-sm" onclick="openSheet('addCoach')">{{ icon('plus','w-4 h-4') }}{{ t('add_coach') }}</button>
   </div>
 
   {% if code_error %}<div class="sheet sheet-bd text-bad text-sm font-semibold" role="alert">{{ t('w_code_error') }}</div>{% endif %}

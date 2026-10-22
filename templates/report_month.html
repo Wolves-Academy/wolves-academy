@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_ui.html" import money, dmon, initials %}
+{% block title %}{{ t('w_month_report') }}{% endblock %}
+{% set f = rep.fin %}
+{% block content %}
+<div class="stack">
+  <div class="flex items-end gap-3 flex-wrap">
+    <div class="min-w-0">
+      <a href="/reports/weekly" class="sub hover:text-ink no-print">{{ t('w_nav_reports') }}</a>
+      <h1 class="h-page mt-1">{{ t('w_month_report') }} <span class="num" id="monthName" data-month="{{ rep.month }}">{{ rep.month }}</span></h1>
+      <div class="sub mt-1">{{ t('w_month_sub') }}</div>
+    </div>
+    <div class="ms-auto flex gap-2 no-print">
+      <a href="/reports/month?month={{ prev }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_prev_month') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></a>
+      {% if not is_current %}<a href="/reports/month" class="btn btn-line btn-sm">{{ t('w_this_month') }}</a>{% endif %}
+      <a href="/reports/month?month={{ next }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_next_month') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></a>
+    </div>
+  </div>
+
+  <!-- close checklist -->
+  <section class="sheet">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_close_list') }}</h2></div>
+    <div class="rows">
+      <a href="#salaries" class="row" style="min-height:48px">
+        <span class="{{ 'text-ok' if rep.todo.salaries else 'text-warn' }}">{{ icon('check' if rep.todo.salaries else 'alert','w-5 h-5') }}</span>
+        <span class="flex-1 font-semibold">{{ t('w_close_salaries') }}</span>
+        <span class="num {{ 'text-ok' if rep.todo.salaries else 'text-bad font-bold' }}">{{ t('w_all_done') if rep.todo.salaries else money(rep.salary_left) ~ ' JD' }}</span>
+      </a>
+      <a href="#owed" class="row" style="min-height:48px">
+        <span class="{{ 'text-ok' if rep.todo.owed else 'text-warn' }}">{{ icon('check' if rep.todo.owed else 'alert','w-5 h-5') }}</span>
+        <span class="flex-1 font-semibold">{{ t('w_close_owed') }}</span>
+        <span class="num {{ 'text-ok' if rep.todo.owed else 'text-bad font-bold' }}">{{ t('w_all_done') if rep.todo.owed else money(rep.owed.total) ~ ' JD' }}</span>
+      </a>
+      <a href="/finance?month={{ rep.month }}" class="row" style="min-height:48px">
+        <span class="text-faint">{{ icon('wallet','w-5 h-5') }}</span>
+        <span class="flex-1 font-semibold">{{ t('w_close_expenses') }}</span>
+        <span class="num sub">{{ money(f.other) }} JD</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- money -->
+  <section class="statement">
+    <div class="ledger" style="--cols:3">
+      <div>
+        <div class="k">{{ t('w_money_in') }}</div>
+        <div class="v mid num ok-hi">{{ money(f.revenue) }}<span class="u">JD</span></div>
+        <div class="s num">{{ t('w_payments_n', n=rep.payments) }}{% if f.sponsor %} · {{ t('w_events_in', n=money(f.sponsor)) }}{% endif %}</div>
+      </div>
+      <div>
+        <div class="k">{{ t('w_money_out') }}</div>
+        <div class="v mid num bad-hi">{{ money(f.expenses) }}<span class="u">JD</span></div>
+        <div class="s num">{{ t('fin_salaries') }} {{ money(f.salaries) }} · {{ t('fin_other') }} {{ money(f.other) }}</div>
+      </div>
+      <div>
+        <div class="k">{{ t('w_net') }}</div>
+        <div class="v mid num {{ 'ok-hi' if f.profit >= 0 else 'bad-hi' }}">{{ '+' if f.profit > 0 }}{{ money(f.profit) }}<span class="u">JD</span></div>
+        {% if f.margin is not none %}<div class="s num">{{ f.margin }}%</div>{% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- salaries -->
+  <section class="sheet" id="salaries">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_salaries_month') }}</h2>
+      <span class="meta num">{{ money(rep.salary_paid) }} / {{ money(f.salaries) }} JD</span></div>
+    <div class="rows">
+      {% for c in rep.coaches %}
+      <div class="row stack-sm">
+        {{ initials(c.name) }}
+        <div class="flex-1 min-w-0">
+          <div class="font-bold truncate">{{ c.name }}</div>
+          <div class="sub num">{{ t('w_days_n', n=c.days) }}
+            {%- if c.via.qr %} · {{ t('w_via_qr') }} {{ c.via.qr }}{% endif %}
+            {%- if c.via.whatsapp %} · {{ t('w_via_wa') }} {{ c.via.whatsapp }}{% endif %}
+            {%- if c.via.admin %} · {{ t('w_via_admin') }} {{ c.via.admin }}{% endif %}
+            · {{ t('salary_monthly') if c.salary_type == 'monthly' else t('salary_session') }} {{ money(c.rate) }}</div>
+          <div class="sub num">{{ t('w_due') }} {{ money(c.salary.due) }} · {{ t('m_paid') }} {{ money(c.salary.paid) }}</div>
+        </div>
+        <span class="end">
+          {% if c.salary.left > 0 %}
+          <form method="post" action="/coaches/{{ c.id }}/pay" class="no-print">
+            <input type="hidden" name="month" value="{{ rep.month }}"><input type="hidden" name="back" value="/reports/month?month={{ rep.month }}#salaries">
+            <button class="btn btn-ink btn-sm">{{ t('w_pay_n', n=money(c.salary.left)) }}</button>
+          </form>
+          {% elif c.salary.state == 'paid' %}<span class="tag tag-ok">{{ t('m_paid') }}</span>
+          {% else %}<span class="tag tag-mute">{{ t('m_nothing_due') }}</span>{% endif %}
+        </span>
+      </div>
+      {% else %}<div class="empty">{{ t('no_coaches') }}</div>{% endfor %}
+    </div>
+  </section>
+
+  <div class="grid gap-4 lg:gap-5 lg:grid-cols-2 items-start">
+    <!-- attendance -->
+    <section class="sheet">
+      <div class="sheet-hd"><h2 class="h-sec">{{ t('nav_attendance') }}</h2>
+        <span class="meta num">{{ rep.rate if rep.rate is not none else '-' }}{% if rep.rate is not none %}%{% endif %}</span></div>
+      <div class="ledger" style="--cols:3">
+        <div><div class="k">{{ t('w_sessions_held') }}</div><div class="v mid num">{{ rep.sessions }}</div></div>
+        <div><div class="k">{{ t('present_word') }}</div><div class="v mid num text-ok">{{ rep.present }}</div></div>
+        <div><div class="k">{{ t('absent_word') }}</div><div class="v mid num text-bad">{{ rep.absent }}</div></div>
+      </div>
+      <div class="rows ledger-rule">
+        {% for g in rep.groups %}
+        <div class="row" style="min-height:44px">
+          <span class="w-32 shrink-0 truncate font-semibold">{{ g.name_ar if lang == 'ar' else g.name_en }}</span>
+          <div class="bar flex-1"><i style="width: {{ g.rate or 0 }}%"></i></div>
+          <span class="num w-24 text-end sub">{{ g.present }}/{{ g.present + g.absent }} · {{ g.rate if g.rate is not none else '-' }}%</span>
+        </div>
+        {% else %}<div class="empty">{{ t('w_no_attendance') }}</div>{% endfor %}
+      </div>
+    </section>
+
+    <div class="stack">
+      <!-- players + spending -->
+      <section class="sheet">
+        <div class="sheet-hd"><h2 class="h-sec">{{ t('w_month_numbers') }}</h2></div>
+        <div class="rows">
+          <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_active_players') }}</span><span class="num font-bold">{{ rep.active_players }}</span></div>
+          <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_new_players') }}</span><span class="num font-bold">{{ rep.new_players }}</span></div>
+          <a href="/reports/trials" class="row" style="min-height:44px"><span class="flex-1">{{ t('w_trials') }}</span><span class="num font-bold">{{ rep.trials }}</span></a>
+          <div class="row" style="min-height:44px"><span class="flex-1">{{ t('w_cancelled') }}</span>
+            <span class="sub">{% for d in rep.cancelled %}{{ dmon(d, lang) }}{{ ', ' if not loop.last }}{% else %}-{% endfor %}</span></div>
+          {% for cat in rep.categories %}
+          <div class="row" style="min-height:44px"><span class="flex-1">{{ t('exp_cat_' ~ cat.category) }}</span><span class="num sub">{{ money(cat.total) }} JD · {{ cat.share }}%</span></div>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- still owed -->
+  <section class="sheet" id="owed">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_close_owed') }}</h2><span class="meta num">{{ money(rep.owed.total) }} JD</span></div>
+    <div class="rows">
+      {% for r in rep.owed.rows %}
+      <div class="row">
+        <a href="/players/{{ r.id }}" class="flex-1 min-w-0 font-semibold truncate">{{ r.name }}</a>
+        <span class="end">
+          <span class="num font-bold text-bad">{{ money(r.total) }}</span>
+          {% if r.wa %}<a href="{{ r.wa }}" target="_blank" rel="noopener" class="btn btn-line btn-sm btn-icon no-print" aria-label="{{ t('whatsapp') }}">{{ icon('whatsapp','w-4 h-4') }}</a>{% endif %}
+        </span>
+      </div>
+      {% else %}<div class="empty">{{ t('w_nobody_owes') }}</div>{% endfor %}
+    </div>
+  </section>
+
+  <!-- share -->
+  <section class="sheet no-print">
+    <div class="sheet-hd"><h2 class="h-sec">{{ t('w_share') }}</h2></div>
+    <pre id="repText" class="sheet-bd whitespace-pre-wrap text-sm" dir="rtl">{{ rep.text }}</pre>
+    <div class="sheet-ft flex-wrap">
+      <button type="button" class="btn btn-ink btn-sm" onclick="copyReport()">{{ icon('file','w-4 h-4') }}{{ t('copy_whatsapp') }}</button>
+      <a class="btn btn-wa btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text={{ rep.text|urlencode }}">{{ icon('whatsapp','w-4 h-4') }}{{ t('whatsapp') }}</a>
+      <button type="button" class="btn btn-line btn-sm" onclick="print()">{{ icon('printer','w-4 h-4') }}{{ t('w_print') }}</button>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){ const el = document.getElementById('monthName'), m = el.dataset.month;
+  el.textContent = new Date(m + '-01T12:00:00').toLocaleDateString({{ lang|tojson }} === 'ar' ? 'ar-JO-u-nu-latn' : 'en-GB', {month:'long', year:'numeric'}); })();
+function copyReport(){
+  const text = document.getElementById('repText').textContent;
+  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }).finally(() => toast({{ t('copied_note')|tojson }}));
+}
+</script>
+{% endblock %}

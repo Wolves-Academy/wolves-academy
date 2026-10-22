@@ -11,6 +11,7 @@
       <div class="sub mt-1 num">{{ rep.start[:4] }}</div>
     </div>
     <div class="ms-auto flex gap-2 no-print">
+      <a href="/reports/month" class="btn btn-line btn-sm">{{ t('w_month_report') }}</a>
       <a href="/reports/weekly?week={{ prev }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_prev_week') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></a>
       {% if not is_current %}<a href="/reports/weekly" class="btn btn-line btn-sm">{{ t('w_this_week') }}</a>{% endif %}
       <a href="/reports/weekly?week={{ next }}" class="btn btn-line btn-sm btn-icon" aria-label="{{ t('w_next_week') }}"><svg class="w-4 h-4 flip-rtl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></a>

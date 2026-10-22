@@ -47,9 +47,9 @@
   <section class="sheet flex items-center gap-3 px-4 py-3">
     <div class="flex-1 min-w-0">
       <div class="font-bold" id="ciTitle">{{ t('w_checkin_q') }}</div>
-      <div class="sub" id="ciSub">{{ t('w_checkin_sub') }}</div>
+      <div class="sub" id="ciSub">{{ t('w_ci_scan_hint') }}</div>
     </div>
-    <button type="button" id="ciBtn" class="btn btn-acc btn-sm" onclick="checkIn()">{{ icon('check','w-4 h-4') }}{{ t('w_checkin_btn') }}</button>
+    <span id="ciBtn" class="text-accent shrink-0">{{ icon('qr','w-6 h-6') }}</span>
   </section>
   {% endif %}
 
@@ -65,7 +65,7 @@
     {% endif %}
     <div id="groupChips" class="chips" role="tablist" aria-label="{{ t('group') }}">
       {% for g in groups %}
-      <button type="button" class="da-tab !h-auto !py-2 flex-col !items-start !gap-0.5" role="tab" data-gid="{{ g.id }}"
+      <button type="button" class="da-tab !h-auto !py-2 flex-col !items-start !gap-0.5" role="tab" data-gid="{{ g.id }}" data-wa="{{ g.wa_link or '' }}"
               data-name="{{ (g.name_ar ~ ' ' ~ g.name_en)|lower }}" onclick="selectGroup({{ g.id }}, this)">
         <span class="whitespace-nowrap text-[13.5px]">{{ g.name_ar if lang == 'ar' else g.name_en }}</span>
         {% if g.time_slot %}<span class="num text-[11px] font-semibold opacity-70 whitespace-nowrap">{{ g.time_slot }}</span>{% endif %}
@@ -118,6 +118,8 @@
     <div class="sheet-ft flex-wrap">
       <span class="sub num" id="marked">0 / 0</span>
       <div class="ms-auto flex gap-2">
+        <a id="grpWa" href="#" target="_blank" rel="noopener" class="btn btn-wa btn-sm btn-icon hidden"
+           title="{{ t('w_grp_wa_open') }}" aria-label="{{ t('w_grp_wa_open') }}">{{ icon('whatsapp','w-4 h-4') }}</a>
         <button id="allBtn" class="btn btn-line btn-sm">{{ icon('check','w-4 h-4') }}{{ t('mark_all_present') }}</button>
         <button id="closeBtn" class="btn btn-ink btn-sm">{{ t('close_session') }}</button>
       </div>
@@ -366,15 +368,11 @@ async function submitAdd(){
 }
 
 // coaches on court (per date)
-async function checkIn(){
-  const r = await fetch('/api/coach/check-in', {method:'POST'}); if (!r.ok) return;
-  const d = await r.json(); showCheckedIn(d.check_in); toast({{ t('w_checked_in_toast')|tojson }});
-}
 function showCheckedIn(t){
   const b = document.getElementById('ciBtn'); if (!b) return;
   document.getElementById('ciTitle').textContent = {{ t('w_checked_in')|tojson }};
   document.getElementById('ciSub').textContent = t ? {{ t('w_checked_in_at')|tojson }}.replace('{t}', t) : '';
-  b.disabled = true; b.classList.remove('btn-acc'); b.classList.add('btn-line');
+  b.classList.replace('text-accent', 'text-ok'); b.innerHTML = {{ icon('check','w-6 h-6')|tojson }};
 }
 async function cancelDay(){
   const note = document.getElementById('cdNote').value;
@@ -409,6 +407,7 @@ document.getElementById('todayBtn').addEventListener('click', () => goDate(TODAY
 dateInp.addEventListener('change', () => { if (dateInp.value) goDate(dateInp.value); });
 function selectGroup(gid, el){
   groupSel.value = gid;
+  const wa = document.getElementById('grpWa'); wa.href = el.dataset.wa || '#'; wa.classList.toggle('hidden', !el.dataset.wa);
   document.querySelectorAll('#groupChips .da-tab').forEach(c => { c.classList.toggle('on', c === el); c.setAttribute('aria-selected', c === el); });
   load();
 }

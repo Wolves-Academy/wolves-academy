@@ -115,18 +115,47 @@ def gate_coachday():
     con = db.get_db()
     lina = con.execute("SELECT * FROM coaches WHERE code='777111'").fetchone()
     c, _ = coach_login("777111")
-    r = c.post("/api/coach/check-in", environ_base=REMOTE).get_json()
-    check(r["ok"] and r["check_in"], "check-in returns time")
-    c.post("/api/coach/check-in", environ_base=REMOTE)
     month = T.strftime("%Y-%m")
+    # option 1: court QR from the admin screen; the scanning coach must be signed in
+    qr = a.get("/api/checkin/qr").get_json()
+    check(qr["qr"].startswith("data:image/svg+xml"), "admin gets a QR image")
+    tok = con.execute("SELECT token FROM checkin_tokens WHERE coach_id IS NULL ORDER BY id DESC").fetchone()["token"]
+    anon = appmod.app.test_client()
+    r = anon.get(f"/checkin/{tok}", environ_base=REMOTE)
+    check(r.status_code == 302 and "/login" in r.headers["Location"], "QR asks a signed-out coach to log in")
+    r = anon.post(f"/login?next=/checkin/{tok}", data={"pin": "777111"}, environ_base=REMOTE)
+    check(r.headers["Location"].endswith(f"/checkin/{tok}"), "login returns to the scanned QR")
+    check("<form method=\"post\"" in c.get(f"/checkin/{tok}", environ_base=REMOTE).get_data(as_text=True),
+          "QR shows the check button")
+    c.post(f"/checkin/{tok}", environ_base=REMOTE)
+    c.post(f"/checkin/{tok}", environ_base=REMOTE)
+    row = con.execute("SELECT * FROM coach_attendance WHERE coach_id=? AND session_date=?", (lina["id"], iso(0))).fetchone()
+    check(row and row["method"] == "qr" and row["check_in"], "QR check-in recorded with time")
     check(db.salary_status(con, lina, month)["due"] == 10, "one day counted once -> 10 JD due")
-    # auto check-in on first attendance mark (yesterday)
+    check(c.post("/api/coach/check-in", environ_base=REMOTE).status_code in (404, 405), "no free check-in button")
+    con.execute("UPDATE checkin_tokens SET expires='2000-01-01T00:00:00' WHERE token=?", (tok,))
+    con.commit()
+    check("<form method" not in c.get(f"/checkin/{tok}", environ_base=REMOTE).get_data(as_text=True), "expired page")
+    check(db.checkin_token(con, tok) is None, "expired QR rejected")
+    # option 2: one-time WhatsApp link, no login needed
+    con.execute("DELETE FROM coach_attendance WHERE coach_id=?", (lina["id"],))
+    con.execute("UPDATE coaches SET phone='0791110000' WHERE id=?", (lina["id"],))
+    con.commit()
+    r = a.get(f"/coaches/{lina['id']}/wa-checkin")
+    check(r.status_code == 302 and r.headers["Location"].startswith("https://wa.me/962791110000"), "WhatsApp link opens chat")
+    wtok = con.execute("SELECT token FROM checkin_tokens WHERE coach_id=?", (lina["id"],)).fetchone()["token"]
+    anon2 = appmod.app.test_client()
+    anon2.post(f"/checkin/{wtok}", environ_base=REMOTE)
+    row = con.execute("SELECT method FROM coach_attendance WHERE coach_id=? AND session_date=?", (lina["id"], iso(0))).fetchone()
+    check(row and row["method"] == "whatsapp", "WhatsApp link checks the coach in")
+    check(db.checkin_token(con, wtok) is None, "WhatsApp link works once")
+    # marking players no longer checks the coach in
     pid = new_player(con, "Auto Kid")
     db.create_subscription(con, pid, iso(-5), price=20, sessions_total=12)
     c.post("/api/attendance/mark", json={"player_id": pid, "date": iso(-1), "group_id": 1, "status": "present"},
            environ_base=REMOTE)
-    check(con.execute("SELECT 1 FROM coach_attendance WHERE coach_id=? AND session_date=?",
-                      (lina["id"], iso(-1))).fetchone(), "marking attendance checks the coach in")
+    check(not con.execute("SELECT 1 FROM coach_attendance WHERE coach_id=? AND session_date=?",
+                          (lina["id"], iso(-1))).fetchone(), "marking attendance does not check the coach in")
     check(con.execute("SELECT marked_by FROM attendance WHERE player_id=?", (pid,)).fetchone()["marked_by"]
           == "Coach Lina", "mark attributed to the coach")
     check(c.post(f"/coaches/{lina['id']}/present", json={"date": iso(0)}, environ_base=REMOTE).status_code in (302, 403),
@@ -263,7 +292,7 @@ def gate_pages():
     a = admin()
     pages = ["/dashboard", "/players", "/players?sort=school", "/players/new", f"/players/{pid}", f"/players/{pid}/edit",
              "/attendance", "/payments", "/finance", "/settings", "/groups", "/analytics", "/events", "/coaches",
-             f"/coaches/{cid}", "/reports/weekly", "/reports/trials", f"/receipt/{pay}", "/qr"]
+             f"/coaches/{cid}", "/reports/weekly", "/reports/trials", "/reports/month", "/coaches/checkin", f"/receipt/{pay}", "/qr"]
     for lang in ("en", "ar"):
         a.set_cookie("lang", lang)
         for u in pages:
@@ -316,7 +345,42 @@ def gate_legacy():
     return "GATE_LEGACY_OK"
 
 
-GATES = {"coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
+def gate_monthend():
+    set_days(ALL7)
+    a = admin()
+    # group WhatsApp link: kept when real, dropped otherwise
+    a.post("/groups/save", data={"name_ar": "جروب", "name_en": "WA Group", "wa_link": "https://chat.whatsapp.com/AbC123xyz"})
+    a.post("/groups/save", data={"name_ar": "سيء", "name_en": "Bad Group", "wa_link": "javascript:alert(1)"})
+    con = db.get_db()
+    g = con.execute("SELECT * FROM groups WHERE name_en='WA Group'").fetchone()
+    check(g["wa_link"] == "https://chat.whatsapp.com/AbC123xyz", "group WhatsApp link saved")
+    check(con.execute("SELECT wa_link FROM groups WHERE name_en='Bad Group'").fetchone()["wa_link"] == "", "bad link dropped")
+    check("https://chat.whatsapp.com/AbC123xyz" in a.get("/groups").get_data(as_text=True), "group shows WhatsApp icon link")
+    check('data-wa="https://chat.whatsapp.com/AbC123xyz"' in a.get("/attendance").get_data(as_text=True),
+          "attendance chip carries the group link")
+    # month-end report: salary due, pay from the report, checklist turns done
+    a.post("/coaches/save", data={"name": "Coach Month", "salary_type": "monthly", "salary_amount": "300",
+                                  "active": "1", "code": "515151"})
+    cm = con.execute("SELECT * FROM coaches WHERE code='515151'").fetchone()
+    month = T.strftime("%Y-%m")
+    rep = db.month_report(con, month)
+    me = next(c for c in rep["coaches"] if c["id"] == cm["id"])
+    check(me["salary"]["left"] == 300 and not rep["todo"]["salaries"], "salary due shows on month report")
+    for lang in ("en", "ar"):
+        a.set_cookie("lang", lang)
+        r = a.get(f"/reports/month?month={month}")
+        check(r.status_code == 200 and "Coach Month" in r.get_data(as_text=True), f"[{lang}] month report renders")
+    r = a.post(f"/coaches/{cm['id']}/pay", data={"month": month, "back": f"/reports/month?month={month}#salaries"})
+    check("/reports/month" in r.headers["Location"], "pay returns to the report")
+    me = next(c for c in db.month_report(con, month)["coaches"] if c["id"] == cm["id"])
+    check(me["salary"]["state"] == "paid", "salary paid from the report")
+    check("تقرير شهر" in db.month_report(con, month)["text"], "WhatsApp summary text")
+    check(a.get("/reports/month?month=bad").status_code == 200, "bad month falls back")
+    con.close()
+    return "GATE_MONTHEND_OK"
+
+
+GATES = {"monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
          "trials": gate_trials, "cancel": gate_cancel, "pages": gate_pages, "legacy": gate_legacy}
 
 if __name__ == "__main__":
