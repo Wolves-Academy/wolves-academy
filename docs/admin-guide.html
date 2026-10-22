@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Wolves Sports Academy - Admin Guide</title>
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  :root { --ink:#16121f; --dim:#5b5568; --faint:#8c869a; --line:#e4e0ec; --acc:#8522ff; --acc-soft:#f3ecff; --neon:#16c172; --bad:#d4334a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif; color:var(--ink); font-size:10.6pt; line-height:1.5; background:#fff; }
+  h1, h2, h3 { margin:0; line-height:1.2; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* cover */
+  .cover { height: 255mm; display:flex; flex-direction:column; justify-content:space-between; page-break-after: always;
+           background:#0d0a14; color:#fff; margin:-16mm -15mm 0; padding:22mm 20mm; position:relative; overflow:hidden; }
+  .cover::after { content:''; position:absolute; inset-inline:20mm; bottom:58mm; height:2px; background:var(--neon); box-shadow:0 0 12px var(--neon); }
+  .cover img { width:58mm; }
+  .cover h1 { font-size:34pt; letter-spacing:-.5px; margin-top:16mm; }
+  .cover .lead { font-size:13pt; color:#c9c2d8; margin-top:5mm; max-width:140mm; }
+  .cover .meta { color:#8c869a; font-size:9.5pt; }
+  .cover .kicker { color:var(--neon); font-weight:700; letter-spacing:.18em; font-size:9pt; text-transform:uppercase; }
+
+  /* sections */
+  section { page-break-inside: auto; margin-bottom:9mm; }
+  .sec-hd { display:flex; align-items:baseline; gap:4mm; border-bottom:2px solid var(--ink); padding-bottom:2mm; margin-bottom:4mm; page-break-after: avoid; }
+  .sec-hd .n { color:var(--acc); font-weight:800; font-size:20pt; }
+  .sec-hd h2 { font-size:17pt; }
+  .where { display:inline-block; background:var(--acc-soft); color:var(--acc); font-weight:700; font-size:9pt; padding:1mm 2.5mm; border-radius:2mm; margin-bottom:3mm; }
+  .intro { color:var(--dim); margin:0 0 4mm; }
+
+  .task { border:1px solid var(--line); border-radius:3mm; padding:3.5mm 4.5mm; margin-bottom:3mm; page-break-inside: avoid; }
+  .task h3 { font-size:11.5pt; margin-bottom:1.5mm; }
+  .task ol, .task ul { margin:0; padding-inline-start:5mm; }
+  .task li { margin:.6mm 0; }
+  .task p { margin:0; }
+  .tip { border-inline-start:3px solid var(--neon); background:#effbf5; padding:2.5mm 4mm; border-radius:0 2mm 2mm 0; margin:3mm 0; page-break-inside: avoid; }
+  .warn { border-inline-start:3px solid var(--bad); background:#fdf0f2; padding:2.5mm 4mm; border-radius:0 2mm 2mm 0; margin:3mm 0; page-break-inside: avoid; }
+  b.btn { display:inline-block; border:1px solid #cfc8dc; border-radius:1.5mm; padding:0 1.6mm; font-size:9.4pt; background:#faf8fd; white-space:nowrap; }
+
+  /* routine cards */
+  .grid3 { display:grid; grid-template-columns: repeat(3, 1fr); gap:4mm; }
+  .card { border:1px solid var(--line); border-top:3px solid var(--acc); border-radius:2mm; padding:3.5mm 4mm; page-break-inside: avoid; }
+  .card h3 { font-size:11pt; margin-bottom:2mm; }
+  .card ul { margin:0; padding-inline-start:4.5mm; font-size:9.8pt; }
+  .card li { margin:.8mm 0; }
+
+  table.map { width:100%; border-collapse:collapse; font-size:9.8pt; }
+  table.map th, table.map td { text-align:start; padding:2mm 2.5mm; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.map th { font-size:8.5pt; color:var(--faint); text-transform:uppercase; letter-spacing:.08em; }
+  table.map td:first-child { font-weight:700; white-space:nowrap; }
+
+  .toc { columns:2; column-gap:10mm; padding:0; list-style:none; margin:0; }
+  .toc li { padding:1.6mm 0; border-bottom:1px dotted var(--line); break-inside: avoid; }
+  .toc li span { color:var(--acc); font-weight:800; display:inline-block; width:8mm; }
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<!-- ============ COVER ============ -->
+<div class="cover">
+  <div>
+    <img src="../static/logo-full.png" alt="Wolves Sports Academy">
+    <div class="kicker" style="margin-top:18mm">Admin guide</div>
+    <h1>Everything the admin can do</h1>
+    <p class="lead">Players, attendance, payments, coaches, salaries and reports. Each task in short steps.</p>
+  </div>
+  <div class="meta">Wolves Sports Academy app · English / Arabic · works on phone and computer</div>
+</div>
+
+<!-- ============ ROUTINE + CONTENTS ============ -->
+<section>
+  <div class="sec-hd"><span class="n">0</span><h2>Your routine at a glance</h2></div>
+  <div class="grid3">
+    <div class="card">
+      <h3>Every training day</h3>
+      <ul>
+        <li>Open <b>Coach check-in</b> so coaches scan the QR</li>
+        <li>Check <b>Dashboard</b>: new players waiting for approval, renewals due</li>
+        <li>Record any payments received</li>
+        <li>Log today's court and water costs</li>
+        <li>Rain or holiday? <b>Cancel this session</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Every week</h3>
+      <ul>
+        <li>Open <b>Reports → Weekly report</b></li>
+        <li>Send the WhatsApp summary</li>
+        <li>Check the <b>Trials report</b> and call kids still "waiting"</li>
+        <li>Send reminders to parents who owe money</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>End of month (28th+)</h3>
+      <ul>
+        <li>Open <b>Month-end report</b> (the dashboard reminds you)</li>
+        <li>Pay each coach's salary from the report</li>
+        <li>Collect money still owed</li>
+        <li>Check the month's expenses</li>
+        <li>Send the summary on WhatsApp</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin:7mm 0 3mm; font-size:12pt">Contents</h3>
+  <ol class="toc">
+    <li><span>1</span>Signing in, language, phone app</li>
+    <li><span>2</span>Dashboard</li>
+    <li><span>3</span>Players</li>
+    <li><span>4</span>Packages and payments</li>
+    <li><span>5</span>Attendance</li>
+    <li><span>6</span>Coaches and check-in</li>
+    <li><span>7</span>Salaries</li>
+    <li><span>8</span>Finance and expenses</li>
+    <li><span>9</span>Groups</li>
+    <li><span>10</span>Reports</li>
+    <li><span>11</span>Events</li>
+    <li><span>12</span>Settings</li>
+    <li><span>13</span>Excel, backups, AI assistant</li>
+    <li><span>14</span>What coaches can and can't do</li>
+  </ol>
+</section>
+
+<!-- ============ 1 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">1</span><h2>Signing in, language, phone app</h2></div>
+  <div class="task"><h3>Sign in</h3>
+    <ol><li>Open the app link.</li><li>Type the <b>admin PIN</b> and tap <b class="btn">Login</b>.</li></ol>
+  </div>
+  <div class="warn"><b>First time:</b> the admin PIN starts as <b>0000</b>. Change it straight away in <b>Settings → Access &amp; messages</b>. It can't be the same as a coach code.</div>
+  <div class="task"><h3>Switch language or theme</h3>
+    <p>Tap <b class="btn">عربي</b> / <b class="btn">EN</b> at the top for Arabic or English. The sun/moon button switches light and dark mode.</p>
+  </div>
+  <div class="task"><h3>Install it on your phone like an app</h3>
+    <ul>
+      <li><b>Android (Chrome):</b> tap <b class="btn">Install</b> on the bar at the bottom.</li>
+      <li><b>iPhone (Safari):</b> tap Share → <b>Add to Home Screen</b>.</li>
+    </ul>
+    <p style="margin-top:1.5mm">It opens full screen with the Wolves icon. It needs internet. With no connection it shows "No internet" and never shows old numbers.</p>
+  </div>
+  <div class="task"><h3>Share the link with coaches</h3>
+    <p>Tap the <b>QR icon</b> at the top (Access QR). Coaches scan it to open the app, then sign in with their own code.</p>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section>
+  <div class="sec-hd"><span class="n">2</span><h2>Dashboard</h2></div>
+  <span class="where">Menu → Dashboard</span>
+  <p class="intro">Your home screen. Everything that needs attention today is here.</p>
+  <table class="map">
+    <tr><th>Part</th><th>What it tells you / what you do</th></tr>
+    <tr><td>Money now</td><td>Cash in the box, money owed to you, and where the month is heading.</td></tr>
+    <tr><td>Month-end banner</td><td>From the 28th: "time to close the month". Tap <b>Open</b> for the month-end report.</td></tr>
+    <tr><td>Pending approval</td><td>Players a coach added at training. Tap <b>Approve</b> or reject.</td></tr>
+    <tr><td>Renewal alerts</td><td>Packages ending soon or finished. WhatsApp the parent from here.</td></tr>
+    <tr><td>Money owed</td><td>Who owes what, with a WhatsApp reminder button.</td></tr>
+    <tr><td>Today's court &amp; water</td><td>Log today's session costs.</td></tr>
+    <tr><td>Birthdays</td><td>Players with a birthday this month.</td></tr>
+  </table>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">3</span><h2>Players</h2></div>
+  <span class="where">Menu → Players</span>
+  <div class="task"><h3>Add a player</h3>
+    <ol>
+      <li>Tap <b class="btn">+ Add player</b>.</li>
+      <li>Fill in <b>first, middle and last name</b>, date of birth, gender and <b>school</b>.</li>
+      <li>Add the <b>father's</b> name and phone and the <b>mother's</b> name and phone. Phones are 07XXXXXXXX.</li>
+      <li>Pick the group. The app suggests one from age and gender.</li>
+      <li>Leave "trial used" unchecked to give a <b>free first session</b>. It's used automatically the first time they're marked present.</li>
+      <li>Save. You can start their package straight away.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Find and sort players</h3>
+    <ul>
+      <li><b>Search</b> by name or phone.</li>
+      <li><b>Filter by school</b>: each school shows how many players come from it.</li>
+      <li><b>Sort</b> by name, school, group or age.</li>
+      <li>Filter by group or status (active, frozen, left, pending).</li>
+    </ul>
+  </div>
+  <div class="task"><h3>A player's page (tap any player)</h3>
+    <ul>
+      <li>Package progress: sessions used and left, end date.</li>
+      <li>Payments and receipts, attendance history, both parents' contacts.</li>
+      <li><b class="btn">Edit</b> details, <b class="btn">Renew</b> the package, <b class="btn">Record payment</b>.</li>
+      <li>WhatsApp the parent. If the father's number is missing, it goes to the mother.</li>
+    </ul>
+  </div>
+  <div class="task"><h3>Freeze a player (injury, travel)</h3>
+    <ol>
+      <li>Open the player → <b class="btn">Freeze</b> → pick the start date.</li>
+      <li>While frozen, their sessions <b>don't count</b> and the package moves forward.</li>
+      <li>When they're back: <b class="btn">Unfreeze</b> → pick the return date.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Approve players added by coaches</h3>
+    <p>Coaches can add a new kid at training. The kid shows as <b>Pending</b> on the Dashboard. Approve to make them a real player, or reject.</p>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section>
+  <div class="sec-hd"><span class="n">4</span><h2>Packages and payments</h2></div>
+  <div class="tip"><b>How a package works:</b> 12 training sessions on the calendar. A session is used when its date passes, <b>whether the player came or not</b>. Cancelled days and frozen days don't count.</div>
+  <div class="task"><h3>Start or renew a package</h3>
+    <ol>
+      <li>Open the player → <b class="btn">Renew</b>.</li>
+      <li>Pick the start date and package. The app shows the end date.</li>
+      <li>Enter what was <b>paid now</b>. Less than the price = the rest is owed. 0 = nothing paid yet.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Record a payment (or the rest of a balance)</h3>
+    <ol><li>Player → <b class="btn">Record payment</b>.</li><li>Amount, method (cash / CliQ), date → <b class="btn">Confirm, payment received</b>.</li><li>A receipt (numbered <b>WSA-…</b>) is made. Print it or send it.</li></ol>
+  </div>
+  <div class="task"><h3>Fix a mistake</h3>
+    <p>On the player's page you can edit or delete a payment or a package.</p>
+  </div>
+  <div class="task"><h3>All payments</h3>
+    <span class="where" style="margin:0 0 1.5mm">Menu → Payments</span>
+    <p>Every payment by month and method, with receipts. Tap <b class="btn">Excel</b> to download the list.</p>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">5</span><h2>Attendance</h2></div>
+  <span class="where">Menu → Attendance</span>
+  <div class="task"><h3>Take attendance</h3>
+    <ol>
+      <li>Pick the <b>group</b> at the top.</li>
+      <li>Check the date (arrows, or tap <b>Today</b>).</li>
+      <li>Tap each player: present / absent. Or tap <b class="btn">Mark all present</b>.</li>
+      <li>Tap <b class="btn">Close session</b> for the summary you can copy to WhatsApp.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Open the group's WhatsApp</h3>
+    <p>When a group is picked, the green <b>WhatsApp icon</b> next to "Mark all present" opens that group's chat (if you added the link, see section 9).</p>
+  </div>
+  <div class="task"><h3>Cancel a training day (rain, Eid, court closed)</h3>
+    <ol>
+      <li>Go to that date → tap <b class="btn">Cancel this session</b>.</li>
+      <li>Optional: type the reason ("Rain").</li>
+      <li>Confirm. <b>Nobody loses a session</b>: every package moves forward one session. Marks already taken that day are removed, and a used free trial is given back.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Mark a coach present by hand</h3>
+    <p>On the attendance page, the <b>coaches strip</b> lets you tap a coach to mark them present for that date. Tap again to undo.</p>
+  </div>
+  <div class="tip">A player who trains <b>without an active package</b> is flagged as an <b>unpaid session</b> and shows in "money owed".</div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section>
+  <div class="sec-hd"><span class="n">6</span><h2>Coaches and check-in</h2></div>
+  <span class="where">Menu → Coaches</span>
+  <div class="task"><h3>Add a coach</h3>
+    <ol>
+      <li>Tap <b class="btn">+ Add coach</b>.</li>
+      <li>Name, phone, salary type: <b>monthly</b> (fixed) or <b>per session</b> (paid for each day worked), and the amount.</li>
+      <li><b>Login code:</b> type 4 to 8 digits, or leave it empty and a code is made for you.</li>
+      <li>Save. Give the coach their code. They sign in with it.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>See a coach's activity</h3>
+    <p>Tap a coach to see every login (date and time), the days they worked, how many attendance marks they took, and their salary this month.</p>
+  </div>
+  <div class="task"><h3>Stop a coach's access</h3>
+    <p>Edit the coach → untick <b>Active</b>, or change their code. They are signed out immediately.</p>
+  </div>
+  <div class="task"><h3>Coach check-in: 2 ways (this is what salaries count)</h3>
+    <span class="where" style="margin:0 0 1.5mm">Coaches → Coach check-in</span>
+    <ul>
+      <li><b>Way 1: QR.</b> Keep this page open on your phone or laptop. The coach scans the QR, signs in if needed, and taps <b class="btn">I'm on court</b>. The code changes <b>every minute</b>, so a photo of it can't be used later from home.</li>
+      <li><b>Way 2: WhatsApp link.</b> Tap the green WhatsApp button next to a coach. WhatsApp opens with a message and a link. The coach taps the link, then <b class="btn">I'm on court</b>. No login needed. The link works <b>once, today only</b>.</li>
+    </ul>
+    <p style="margin-top:1.5mm">The page shows live who is in, at what time, and how (QR / WhatsApp / by admin).</p>
+  </div>
+  <div class="warn">Coaches <b>can't</b> check themselves in any other way, and marking players does <b>not</b> check them in. If a coach forgot, mark them present by hand on the Attendance page.</div>
+</section>
+
+<!-- ============ 7 + 8 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">7</span><h2>Salaries</h2></div>
+  <div class="task"><h3>How much each coach gets</h3>
+    <ul><li><b>Monthly coach:</b> the fixed amount.</li><li><b>Per-session coach:</b> days checked in × rate.</li></ul>
+  </div>
+  <div class="task"><h3>Pay a salary</h3>
+    <ol>
+      <li>Open <b>Month-end report</b> (or Finance → coaches).</li>
+      <li>Each coach shows <b>Due</b>, <b>Paid</b> and what's left.</li>
+      <li>Tap <b class="btn">Pay X JD</b>. The status turns to <b>Paid</b>. Part payments work too.</li>
+    </ol>
+  </div>
+  <div class="tip">Any salary not yet handed out stays on the list as <b>owed to coaches</b> until it's paid.</div>
+</section>
+
+<section>
+  <div class="sec-hd"><span class="n">8</span><h2>Finance and expenses</h2></div>
+  <span class="where">Menu → Finance</span>
+  <div class="task"><h3>The money picture</h3>
+    <p>For any month: money in (payments plus event and sponsorship income), money out (salaries plus expenses), profit, cash in the box, a weekly chart, and where the month will land.</p>
+  </div>
+  <div class="task"><h3>Add an expense</h3>
+    <ol>
+      <li>Tap <b class="btn">Add expense</b> → amount, category, date, note.</li>
+      <li>Choose the type: <b>one time</b>, <b>every month</b> (rent), or <b>per session</b> (court booking).</li>
+      <li>To end a monthly expense: <b class="btn">Stop from today</b>. <b class="btn">Resume</b> brings it back.</li>
+    </ol>
+  </div>
+  <div class="task"><h3>Log today's session costs</h3>
+    <p>Finance or Dashboard → <b>Session costs</b>: court bookings (with or without lights) and water, using the prices set in Settings.</p>
+  </div>
+  <div class="task"><h3>Copy last month's expenses</h3>
+    <p>One tap copies last month's one-time expenses into this month.</p>
+  </div>
+</section>
+
+<!-- ============ 9 + 10 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">9</span><h2>Groups</h2></div>
+  <span class="where">Menu → Groups</span>
+  <div class="task"><h3>Create or edit a group</h3>
+    <ol>
+      <li>Tap <b class="btn">+ Add group</b>, or tap a group to edit it.</li>
+      <li>Arabic and English name, ages from / to, boys / girls / mixed, training days, time.</li>
+      <li><b>WhatsApp group link (optional):</b> in WhatsApp (or WhatsApp Business) open the group → Group info → <b>Invite via link</b> → Copy. Paste it here.</li>
+      <li>Save. A green <b>WhatsApp icon</b> appears on the group, and on Attendance when that group is picked. Tap it to jump into the group chat.</li>
+    </ol>
+  </div>
+  <div class="tip">A group with players in it can't be deleted. Move the players first.</div>
+</section>
+
+<section>
+  <div class="sec-hd"><span class="n">10</span><h2>Reports</h2></div>
+  <span class="where">Menu → Reports</span>
+  <table class="map">
+    <tr><th>Report</th><th>What's in it</th></tr>
+    <tr><td>Month-end report</td><td><b>Close checklist</b> (salaries handed out, money collected, expenses checked), money in and out, profit, each coach's days and salary with a <b>Pay</b> button, attendance per group, active, new and trial players, cancelled days, spending by category, who still owes money (with WhatsApp reminders). Move between months with the arrows.</td></tr>
+    <tr><td>Weekly report</td><td>Saturday to Friday: sessions held and cancelled, attendance rate per group, new players, trials, money in and out, coach days.</td></tr>
+    <tr><td>Trials report</td><td>Every free trial and its result: <b>joined</b>, <b>left</b>, or <b>still waiting</b>. Call the waiting ones.</td></tr>
+    <tr><td>Analytics</td><td>Charts: revenue, attendance rate, new players, groups. Also at-risk players (stopped coming) and smart insights.</td></tr>
+  </table>
+  <div class="tip">Each report has <b class="btn">Copy for WhatsApp</b>, a <b class="btn">WhatsApp</b> button and <b class="btn">Print</b>. The summary is written in Arabic, ready to send.</div>
+</section>
+
+<!-- ============ 11 + 12 ============ -->
+<section class="page-break">
+  <div class="sec-hd"><span class="n">11</span><h2>Events</h2></div>
+  <span class="where">Menu → Events</span>
+  <div class="task"><h3>Add an event</h3>
+    <ol>
+      <li>Tap <b class="btn">Add event</b>.</li>
+      <li>Type: school visit, outdoor, indoor, tournament, collab, sponsorship, other.</li>
+      <li>Date, place, note, and an <b>amount</b> if it brings money (sponsorship, fees). That amount counts as <b>income</b> in Finance.</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="sec-hd"><span class="n">12</span><h2>Settings</h2></div>
+  <span class="where">Menu → Settings</span>
+  <table class="map">
+    <tr><th>Part</th><th>What you set</th></tr>
+    <tr><td>Package &amp; prices</td><td>Monthly price, sessions per package (12), and extra bundles (name, sessions, price).</td></tr>
+    <tr><td>Training days</td><td>Which days the academy trains, and from which date. Old packages keep the old days.</td></tr>
+    <tr><td>Days off</td><td>Add holidays ahead of time (Eid, court closed). Every package moves forward one session.</td></tr>
+    <tr><td>Session cost prices</td><td>Court booking (with or without lights) and water prices, used when you log session costs.</td></tr>
+    <tr><td>Opening balance</td><td>Cash you had before using the app.</td></tr>
+    <tr><td>Access &amp; messages</td><td><b>Admin PIN</b>, academy phone, and the WhatsApp message templates for absence and renewal.</td></tr>
+  </table>
+  <div class="tip">Coach codes are not in Settings. Each coach's code is on their profile in <b>Coaches</b>.</div>
+</section>
+
+<!-- ============ 13 + 14 ============ -->
+<section>
+  <div class="sec-hd"><span class="n">13</span><h2>Excel, backups, AI assistant</h2></div>
+  <div class="task"><h3>Excel</h3>
+    <ul>
+      <li><b>Export everything:</b> Dashboard or Players → <b class="btn">Export all</b>.</li>
+      <li><b>Import players:</b> Players → download the template, fill it in, upload it.</li>
+    </ul>
+  </div>
+  <div class="task"><h3>Backups</h3>
+    <p>Online, the database (Supabase) is backed up automatically. On the laptop, a backup copy is made every day.</p>
+  </div>
+  <div class="task"><h3>AI assistant</h3>
+    <p>Ask questions in English or Arabic like "who is frozen?", "who owes money?", "whose package ends this week?" and get the answer with links.</p>
+  </div>
+</section>
+
+<section class="page-break">
+  <div class="sec-hd"><span class="n">14</span><h2>What coaches can and can't do</h2></div>
+  <table class="map">
+    <tr><th>Coaches CAN</th><th>Coaches CAN'T</th></tr>
+    <tr>
+      <td style="font-weight:400; white-space:normal">
+        <ul style="margin:0; padding-inline-start:4.5mm">
+          <li>Sign in with their own code</li>
+          <li>Check in by scanning your QR or tapping your WhatsApp link</li>
+          <li>Take attendance for any group</li>
+          <li>Add a new kid at training (waits for your approval)</li>
+          <li>Open the group's WhatsApp</li>
+        </ul>
+      </td>
+      <td style="white-space:normal; font-weight:400">
+        <ul style="margin:0; padding-inline-start:4.5mm">
+          <li>See money, payments, finance or salaries</li>
+          <li>Check themselves in without your QR or link</li>
+          <li>Mark other coaches present</li>
+          <li>Cancel a training day</li>
+          <li>Change settings, groups, prices or codes</li>
+        </ul>
+      </td>
+    </tr>
+  </table>
+  <div class="tip" style="margin-top:6mm">Every attendance mark records <b>which coach</b> took it, and every login is saved with the date and time.</div>
+</section>
+
+</body>
+</html>
