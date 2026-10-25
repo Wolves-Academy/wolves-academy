@@ -38,3 +38,14 @@ Everything the admin can do, step by step: [docs/Wolves-Admin-Guide.pdf](docs/Wo
 
 Without `DATABASE_URL` the app uses a local SQLite file (`academy.db`).
 `start.bat` runs it on the laptop. Tests: `python tests/test_app.py all`.
+
+## Styling
+
+Tailwind is pre-built into `static/app.css` (no in-browser compile, so phones load faster).
+After changing classes in `templates/`, rebuild it:
+
+```
+npx tailwindcss@3.4.17 -c tailwind.config.cjs -i static/src/tw.css -o static/app.css --minify
+```
+
+Phone layout check (demo server running: `python tests/serve_demo.py`): `node tests/phone_check.cjs`

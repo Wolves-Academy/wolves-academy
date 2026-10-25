@@ -45,6 +45,8 @@ app.json.ensure_ascii = False
 
 # bump this string whenever the UI changes so you can confirm a fresh load
 BUILD = "v1 · 2026-10-21"
+# static files are cached by the browser/CDN; the version changes on every deploy (commit) so updates show at once
+ASSET_V = (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:8] or str(int(os.path.getmtime(os.path.join(BASE_DIR, "static", "app.css"))))
 
 
 @app.after_request
@@ -227,7 +229,7 @@ def inject_globals():
         "dir": "rtl" if lang == "ar" else "ltr",
         "t": lambda key, **kw: translate(lang, key, **kw),
         "wa_num": jordan_wa_number,
-        "BUILD": BUILD,
+        "BUILD": BUILD, "ASSET_V": ASSET_V,
         "coach_name": session.get("coach_name") if current_role() == "coach" else None,
         "logo_svg_uri": LOGO_SVG_URI,
     }
