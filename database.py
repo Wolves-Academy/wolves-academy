@@ -554,8 +554,57 @@ def sessions_between(d1, d2, settings=None):
 
 # ----- freezes -----
 
+# ---------- per-page read cache ----------
+# On a remote database each query is a network round trip, and list pages ask the same
+# per-player questions 60+ times. During a page view (GET) these tables are read once,
+# grouped by player, and answered from memory. Writes (POST) never use the cache.
+import threading as _threading
+
+_RC = _threading.local()
+
+
+def read_cache_begin():
+    _RC.data = {}
+
+
+def read_cache_end():
+    _RC.data = None
+
+
+def _cached(con, key, loader):
+    """Grouped table snapshot for this page view, or None when the cache is off."""
+    data = getattr(_RC, "data", None)
+    if data is None:
+        return None
+    if key not in data:
+        data[key] = loader(con)
+    return data[key]
+
+
+def _group(rows, key="player_id"):
+    out = {}
+    for r in rows:
+        out.setdefault(r[key], []).append(Row(dict(r)))
+    return out
+
+
+def _player_subs(con, player_id):
+    """Subscriptions of a player, newest first."""
+    allsubs = _cached(con, "subs", lambda c: _group(c.execute(
+        "SELECT * FROM subscriptions ORDER BY start_date DESC, id DESC").fetchall()))
+    if allsubs is not None:
+        return allsubs.get(player_id, [])
+    return con.execute("SELECT * FROM subscriptions WHERE player_id=? ORDER BY start_date DESC, id DESC",
+                       (player_id,)).fetchall()
+
+
 def freeze_ranges(con, player_id):
     """[(start, end_exclusive_or_None)] for a player, oldest first."""
+    allf = _cached(con, "freezes", lambda c: _group(c.execute(
+        "SELECT player_id, start_date, end_date FROM player_freezes ORDER BY start_date").fetchall()))
+    if allf is not None:
+        return [(_d(r["start_date"]), _d(r["end_date"]) if r["end_date"] else None)
+                for r in allf.get(player_id, [])]
     rows = con.execute("SELECT start_date, end_date FROM player_freezes WHERE player_id=? ORDER BY start_date",
                        (player_id,)).fetchall()
     return [(_d(r["start_date"]), _d(r["end_date"]) if r["end_date"] else None) for r in rows]
@@ -616,9 +665,7 @@ def get_active_subscription(con, player_id, settings=None):
     """Return the player's active subscription (most recent), keeping the stored
     sessions_used / expiry_date / status in sync with the calendar. Else None."""
     settings = settings or get_settings()
-    subs = con.execute(
-        "SELECT * FROM subscriptions WHERE player_id=? ORDER BY start_date DESC, id DESC",
-        (player_id,)).fetchall()
+    subs = _player_subs(con, player_id)
     today = date.today()
     progs = [(s, sub_progress(con, s, settings)) for s in subs]
     live = [s for s, p in progs if p["active"]]
@@ -636,9 +683,13 @@ def get_active_subscription(con, player_id, settings=None):
         if (s["sessions_used"] != prog["used"] or s["expiry_date"] != prog["expiry"] or s["status"] != new_status):
             con.execute("UPDATE subscriptions SET sessions_used=?, expiry_date=?, status=? WHERE id=?",
                         (prog["used"], prog["expiry"], new_status, s["id"]))
+            if isinstance(s, dict):          # cached copy: keep it in step with the row
+                s.update(sessions_used=prog["used"], expiry_date=prog["expiry"], status=new_status)
             dirty = True
     if dirty:
         con.commit()
+    if getattr(_RC, "data", None) is not None:
+        return next((s for s in subs if s["id"] == found), None)
     return con.execute("SELECT * FROM subscriptions WHERE id=?", (found,)).fetchone() if found else None
 
 
@@ -739,6 +790,13 @@ def add_payment(con, player_id, amount, pay_date=None, method="cash", note="", s
 
 def player_balance(con, player_id):
     """What the player still owes: package prices minus money received (>0 = owes)."""
+    sums = _cached(con, "balances", lambda c: (
+        {r["player_id"]: r["s"] for r in c.execute(
+            "SELECT player_id, COALESCE(SUM(price),0) s FROM subscriptions GROUP BY player_id").fetchall()},
+        {r["player_id"]: r["s"] for r in c.execute(
+            "SELECT player_id, COALESCE(SUM(amount),0) s FROM payments GROUP BY player_id").fetchall()}))
+    if sums is not None:
+        return round((sums[0].get(player_id) or 0) - (sums[1].get(player_id) or 0), 2)
     owed = con.execute("SELECT COALESCE(SUM(price),0) s FROM subscriptions WHERE player_id=?",
                        (player_id,)).fetchone()["s"]
     paid = con.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE player_id=?",
@@ -888,7 +946,9 @@ def suggest_group(con, birth_date, gender):
 def attendance_rate(con, player_id):
     """Present / (present + absent) over a player's whole history. Excused is ignored.
     Returns {rate, present, absent, excused, total, streak}."""
-    rows = con.execute(
+    allatt = _cached(con, "attendance", lambda c: _group(c.execute(
+        "SELECT player_id, status, session_date FROM attendance ORDER BY session_date DESC").fetchall()))
+    rows = allatt.get(player_id, []) if allatt is not None else con.execute(
         "SELECT status, session_date FROM attendance WHERE player_id=? ORDER BY session_date DESC",
         (player_id,)).fetchall()
     present = sum(1 for r in rows if r["status"] == "present")
@@ -938,6 +998,11 @@ def month_sessions(month=None, settings=None, upto_today=True):
 
 def coach_month_sessions(con, coach_id, month=None):
     month = month or date.today().strftime("%Y-%m")
+    counts = _cached(con, "coach_days", lambda c: {(r["coach_id"], r["m"]): r["n"] for r in c.execute(
+        "SELECT coach_id, substr(session_date, 1, 7) m, COUNT(*) n FROM coach_attendance "
+        "GROUP BY coach_id, substr(session_date, 1, 7)").fetchall()})
+    if counts is not None:
+        return counts.get((coach_id, month), 0)
     return con.execute(
         "SELECT COUNT(*) c FROM coach_attendance WHERE coach_id=? AND session_date LIKE ?",
         (coach_id, month + "%")).fetchone()["c"]
@@ -956,11 +1021,19 @@ def coach_month_cost(con, coach, month=None):
     return coach["salary_amount"] or 0
 
 
+_HAS_RECURRING = []
+
+
 def _has_recurring(con):
+    if _HAS_RECURRING:                     # the schema doesn't change while the app runs
+        return True
     try:
-        return "recurring" in _columns(con, "expenses")
+        ok = "recurring" in _columns(con, "expenses")
     except Exception:
         return False
+    if ok:
+        _HAS_RECURRING.append(True)
+    return ok
 
 
 def month_expense_rows(con, month=None, settings=None, projected=False):
@@ -1116,10 +1189,11 @@ def money_owed(con, settings=None):
     settings = settings or get_settings()
     per_session = float(settings.get("monthly_price") or 0) / max(1, int(settings.get("sessions_per_month") or 12))
     rows = []
+    unpaid_by = {r["player_id"]: r["c"] for r in con.execute(
+        "SELECT player_id, COUNT(*) c FROM attendance WHERE unpaid=1 GROUP BY player_id").fetchall()}
     for p in con.execute("SELECT id, full_name, guardian_phone, parent2_phone, phone FROM players WHERE status!='left'").fetchall():
         bal = player_balance(con, p["id"])
-        unpaid = con.execute("SELECT COUNT(*) c FROM attendance WHERE player_id=? AND unpaid=1",
-                             (p["id"],)).fetchone()["c"]
+        unpaid = unpaid_by.get(p["id"], 0)
         if bal > 0 or unpaid:
             rows.append({"id": p["id"], "name": p["full_name"], "phone": p["guardian_phone"] or p["parent2_phone"] or p["phone"],
                          "balance": max(bal, 0), "unpaid": unpaid,

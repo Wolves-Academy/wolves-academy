@@ -165,6 +165,18 @@ def logout():
 
 
 @app.before_request
+def _page_read_cache():
+    # page views read shared tables once (see database._cached); writes always go to the database
+    if request.method == "GET":
+        db.read_cache_begin()
+
+
+@app.teardown_request
+def _page_read_cache_end(exc=None):
+    db.read_cache_end()
+
+
+@app.before_request
 def daily_backup_hook():
     t = date.today().isoformat()
     if db.is_postgres():
@@ -301,9 +313,7 @@ def player_sub_info(con, player, settings=None):
     sub = db.get_active_subscription(con, player["id"], settings)
     if not sub:
         # is there a recent non-active sub? (for "needs renewal" context)
-        last = con.execute(
-            "SELECT * FROM subscriptions WHERE player_id=? ORDER BY start_date DESC LIMIT 1", (player["id"],)
-        ).fetchone()
+        last = next(iter(db._player_subs(con, player["id"])), None)
         return {"active": False, "sub": dict(last) if last else None, "left": 0, "days_left": 0,
                 "upcoming": False, "next_session": None, "needs_renewal": True}
     prog = db.sub_progress(con, sub, settings)
