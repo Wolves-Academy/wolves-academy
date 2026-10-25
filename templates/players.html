@@ -18,7 +18,7 @@
         {% if p.status=='left' %}<span class="tag tag-mute">{{ t('st_left') }}</span>{% endif %}
         {% if not p.trial_used and not info.sub %}<span class="tag tag-ok">{{ t('trial_tag') }}</span>{% endif %}
       </div>
-      {% if p.school %}<div class="sub truncate mt-0.5">{{ p.school }}</div>{% endif %}
+      <div class="sub truncate mt-0.5">{{ p.school or '' }}{% if p.school %} · {% endif %}{{ gname.get(p.group_id) or p.group_name or '-' }}</div>
       <div class="mt-1.5 flex items-center gap-2.5 flex-wrap">
         {% if info.active %}
           {{ tally(info.used, info.sub.sessions_total, warn=info.needs_renewal) }}
@@ -28,7 +28,6 @@
         {% else %}
           <span class="sub {{ 'text-bad' if p.status == 'active' }}">{{ t('no_active_sub') }}</span>
         {% endif %}
-        <span class="sub text-faint">· {{ gname.get(p.group_id) or p.group_name or '-' }}</span>
       </div>
     </div>
   </a>
@@ -60,51 +59,39 @@
   </div>
 
   <section class="sheet">
-    <form method="get" class="sheet-bd flex gap-2 flex-wrap">
-      {% if f_group %}<input type="hidden" name="group" value="{{ f_group }}">{% endif %}
-      {% if f_status %}<input type="hidden" name="status" value="{{ f_status }}">{% endif %}
-      {% if f_renewal %}<input type="hidden" name="renewal" value="1">{% endif %}
-      {% if f_school is not none %}<input type="hidden" name="school" value="{{ f_school }}">{% endif %}
-      <div class="relative flex-1 min-w-[180px]">
+    {% set st_all = (status_counts.get('active',0) + status_counts.get('frozen',0) + status_counts.get('pending',0) + status_counts.get('left',0)) %}
+    <form method="get" class="sheet-bd grid gap-2">
+      <div class="relative">
         <span class="absolute top-1/2 -translate-y-1/2 text-faint {{ 'right-3' if dir == 'rtl' else 'left-3' }}">{{ icon('search','w-4 h-4') }}</span>
         <input name="q" value="{{ q }}" placeholder="{{ t('wp_search_ph') }}" type="search"
                class="inp {{ 'pr-10' if dir == 'rtl' else 'pl-10' }}" aria-label="{{ t('wp_search_ph') }}">
       </div>
-      <select name="gender" class="inp !w-auto" onchange="this.form.submit()" aria-label="{{ t('gender') }}">
-        <option value="">{{ t('all') }}</option>
-        <option value="M" {% if f_gender=='M' %}selected{% endif %}>{{ t('males') }}</option>
-        <option value="F" {% if f_gender=='F' %}selected{% endif %}>{{ t('females') }}</option>
-      </select>
-      <select name="sort" class="inp !w-auto" onchange="this.form.submit()" aria-label="{{ t('wp_sort') }}">
-        {% for k in ['name', 'school', 'group', 'age'] %}<option value="{{ k }}" {% if f_sort == k %}selected{% endif %}>{{ t('wp_sort') }}: {{ t('wp_sort_' ~ k) }}</option>{% endfor %}
-      </select>
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <select name="group" class="inp inp-sm" onchange="this.form.submit()" aria-label="{{ t('group') }}">
+          <option value="">{{ t('all_groups') }}</option>
+          {% for g in groups %}<option value="{{ g.id }}" {% if f_group|string == g.id|string %}selected{% endif %}>{{ gname[g.id] }} ({{ group_counts.get(g.id, 0) }})</option>{% endfor %}
+        </select>
+        <select name="school" class="inp inp-sm" onchange="this.form.submit()" aria-label="{{ t('wp_school') }}">
+          <option value="__all">{{ t('wp_all_schools') }}</option>
+          {% for sc in schools %}<option value="{{ sc.s }}" {% if f_school is not none and f_school == sc.s %}selected{% endif %}>{{ sc.s or t('wp_no_school') }} ({{ sc.c }})</option>{% endfor %}
+        </select>
+        <select name="status" class="inp inp-sm" onchange="this.form.submit()" aria-label="{{ t('all_statuses') }}">
+          <option value="">{{ t('all_statuses') }} ({{ st_all }})</option>
+          <option value="renewal" {% if f_renewal %}selected{% endif %}>{{ t('needs_renewal') }}</option>
+          {% for k, label in [('active', t('st_active')), ('frozen', t('st_frozen')), ('pending', t('pending_badge')), ('left', t('st_left'))] %}
+          <option value="{{ k }}" {% if f_status == k %}selected{% endif %}>{{ label }} ({{ status_counts.get(k, 0) }})</option>{% endfor %}
+        </select>
+        <select name="gender" class="inp inp-sm" onchange="this.form.submit()" aria-label="{{ t('gender') }}">
+          <option value="">{{ t('wp_all_genders') }}</option>
+          <option value="M" {% if f_gender=='M' %}selected{% endif %}>{{ t('males') }}</option>
+          <option value="F" {% if f_gender=='F' %}selected{% endif %}>{{ t('females') }}</option>
+        </select>
+        <select name="sort" class="inp inp-sm col-span-2 sm:col-span-1" onchange="this.form.submit()" aria-label="{{ t('wp_sort') }}">
+          {% for k in ['name', 'school', 'group', 'age'] %}<option value="{{ k }}" {% if f_sort == k %}selected{% endif %}>{{ t('wp_sort') }}: {{ t('wp_sort_' ~ k) }}</option>{% endfor %}
+        </select>
+      </div>
+      {% if filtered %}<a href="/players" class="sub text-accent font-bold justify-self-start">{{ t('p_clear_filters') }}</a>{% endif %}
     </form>
-
-    <!-- groups -->
-    <div class="px-4 pb-3 chips" role="tablist" aria-label="{{ t('group') }}">
-      <a href="{{ qs(group='') }}" class="da-tab {{ 'on' if not f_group }}">{{ t('all_groups') }}</a>
-      {% for g in groups %}
-      <a href="{{ qs(group=g.id) }}" class="da-tab {{ 'on' if f_group|string == g.id|string }}">{{ gname[g.id] }}<span class="n num">{{ group_counts.get(g.id, 0) }}</span></a>
-      {% endfor %}
-    </div>
-
-    <!-- schools -->
-    <div class="ledger-rule px-4 py-3 chips" aria-label="{{ t('wp_school') }}">
-      <a href="{{ qs(school=none) }}" class="da-tab {{ 'on' if f_school is none }}">{{ t('wp_all_schools') }}</a>
-      {% for sc in schools %}
-      <a href="{{ qs(school=sc.s) }}" class="da-tab {{ 'on' if f_school is not none and f_school == sc.s }}">{{ sc.s or t('wp_no_school') }}<span class="n num">{{ sc.c }}</span></a>
-      {% endfor %}
-    </div>
-
-    <!-- status -->
-    <div class="ledger-rule px-4 py-3 chips">
-      {% set st_all = (status_counts.get('active',0) + status_counts.get('frozen',0) + status_counts.get('pending',0) + status_counts.get('left',0)) %}
-      <a href="{{ qs(status='', renewal=False) }}" class="da-tab {{ 'on' if not f_status and not f_renewal }}">{{ t('all_statuses') }}<span class="n num">{{ st_all }}</span></a>
-      <a href="{{ qs(status='', renewal=True) }}" class="da-tab {{ 'on' if f_renewal }}">{{ icon('clock','w-3.5 h-3.5') }}{{ t('needs_renewal') }}</a>
-      {% for s, label in [('active', t('st_active')), ('frozen', t('st_frozen')), ('pending', t('pending_badge')), ('left', t('st_left'))] %}
-      <a href="{{ qs(status=s, renewal=False) }}" class="da-tab {{ 'on' if f_status == s }}">{{ label }}<span class="n num">{{ status_counts.get(s, 0) }}</span></a>
-      {% endfor %}
-    </div>
 
     <div class="rows ledger-rule">
       {% if players and f_sort == 'school' %}
@@ -128,10 +115,11 @@
     </div>
   </section>
 
-  <section class="sheet">
-    <div class="sheet-hd"><h2 class="h-sec">{{ t('import_title') }}</h2>
-      <span class="meta"><a href="/export/all" class="text-accent font-bold flex items-center gap-1.5">{{ icon('download','w-4 h-4') }}{{ t('export_all') }}</a></span></div>
+  <details class="sheet">
+    <summary class="sheet-hd cursor-pointer"><h2 class="h-sec">{{ t('wp_excel_tools') }}</h2>
+      <span class="meta">{{ icon('download','w-4 h-4') }}</span></summary>
     <div class="sheet-bd">
+      <a href="/export/all" class="btn btn-line btn-sm mb-3">{{ icon('download','w-4 h-4') }}{{ t('export_all') }}</a>
       <div class="sub mb-1">{{ t('import_hint_pre') }} <a href="/import/template" class="text-accent underline">{{ t('import_hint_link') }}</a>{{ t('import_hint_post') }}</div>
       <div class="sub text-faint mb-3">{{ t('import_formats') }}</div>
       <form method="post" action="/import/players" enctype="multipart/form-data" class="flex gap-2 items-center flex-wrap">
@@ -139,6 +127,6 @@
         <button class="btn btn-line btn-sm">{{ icon('upload','w-4 h-4') }}{{ t('import_btn') }}</button>
       </form>
     </div>
-  </section>
+  </details>
 </div>
 {% endblock %}

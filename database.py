@@ -14,10 +14,9 @@ DB_PATH = os.path.join(BASE_DIR, "academy.db")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 
 DEFAULT_SETTINGS = {
-    "monthly_price": 20,
+    "monthly_price": 85,
     "sessions_per_month": 12,
     "expiry_days": 35,
-    "deduct_on_absence": False,
     "training_days": ["Sunday", "Tuesday", "Thursday"],
     "academy_phone": "",
     "coach_pin": "1234",
@@ -26,9 +25,7 @@ DEFAULT_SETTINGS = {
     "template_absence": "مرحبا، لاحظنا غياب [الاسم] عن تمرين اليوم, إن شاء الله كل شي تمام؟",
     # subscription bundles the admin can pick at renewal
     "bundles": [
-        {"name_en": "Monthly", "name_ar": "شهري", "sessions": 12, "price": 20},
-        {"name_en": "8 sessions", "name_ar": "8 حصص", "sessions": 8, "price": 15},
-        {"name_en": "Single", "name_ar": "حصة", "sessions": 1, "price": 3},
+        {"name_en": "Monthly", "name_ar": "شهري", "sessions": 12, "price": 85},
     ],
     # training-day schedule over time: [{"from": "YYYY-MM-DD", "days": [...]}].
     # Empty = training_days applies to all dates. Changing days "from a date"
@@ -40,12 +37,7 @@ DEFAULT_SETTINGS = {
     "opening_balance": 0,
     # quick "log a session" costs: each is priced per booking / per unit and
     # entered with a quantity (3 groups = 3 court bookings)
-    "cost_presets": [
-        {"key": "court", "name_en": "Court booking", "name_ar": "حجز ملعب", "price": 5, "category": "court_rent"},
-        {"key": "court_lights", "name_en": "Court + lights", "name_ar": "ملعب مع إنارة", "price": 10, "category": "court_rent"},
-        {"key": "water", "name_en": "Water", "name_ar": "مي", "price": 1.5, "category": "water"},
-        {"key": "water_cold", "name_en": "Water (cold day)", "name_ar": "مي (يوم بارد)", "price": 1, "category": "water"},
-    ],
+    "cost_presets": [],
 }
 
 SEED_GROUPS = [
@@ -343,8 +335,22 @@ def init_db():
     # months were settled outside the app and must not show up as owed
     row = con.execute("SELECT data FROM settings WHERE id=1").fetchone()
     data = json.loads(row["data"])
+    changed = False
     if "salary_tracking_from" not in data:
         data["salary_tracking_from"] = date.today().strftime("%Y-%m")
+        changed = True
+    if not data.get("wolves_pricing"):
+        # first Wolves start: replace prices copied from Dream (20 JD a month, its bundles
+        # and court/water prices), but only while nothing was sold or spent yet
+        if not con.execute("SELECT 1 FROM subscriptions LIMIT 1").fetchone():
+            data["monthly_price"] = DEFAULT_SETTINGS["monthly_price"]
+            data["bundles"] = DEFAULT_SETTINGS["bundles"]
+        if not con.execute("SELECT 1 FROM expenses LIMIT 1").fetchone():
+            data["cost_presets"] = []
+        data.pop("deduct_on_absence", None)
+        data["wolves_pricing"] = True
+        changed = True
+    if changed:
         con.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(data, ensure_ascii=False),))
     con.commit()
     con.close()
@@ -462,9 +468,12 @@ def weekdays_on(entries, d):
 
 
 def closed_dates(settings=None):
+    """Days off for the whole academy (a cancelled session of one group is not one)."""
     settings = settings or get_settings()
     out = set()
     for c in settings.get("closed_days") or []:
+        if isinstance(c, dict) and c.get("group_id"):
+            continue
         try:
             out.add(_d(c["date"] if isinstance(c, dict) else c))
         except (KeyError, ValueError, TypeError):
@@ -625,6 +634,32 @@ def _freeze_skipper(ranges):
     return skip
 
 
+def group_closed_dates(settings, group_id):
+    """Dates when only this group's session was cancelled."""
+    if not group_id:
+        return set()
+    return {_d(c["date"]) for c in settings.get("closed_days") or []
+            if isinstance(c, dict) and c.get("group_id") and int(c["group_id"]) == int(group_id)}
+
+
+def _player_group(con, player_id):
+    groups = _cached(con, "player_groups", lambda c: {r["id"]: r["group_id"] for r in c.execute(
+        "SELECT id, group_id FROM players").fetchall()})
+    if groups is not None:
+        return groups.get(player_id)
+    r = con.execute("SELECT group_id FROM players WHERE id=?", (player_id,)).fetchone()
+    return r["group_id"] if r else None
+
+
+def player_skipper(con, player_id, settings):
+    """skip(d) for a player's session math: their freezes + their group's cancelled sessions."""
+    fs = _freeze_skipper(freeze_ranges(con, player_id))
+    gclosed = group_closed_dates(settings, _player_group(con, player_id))
+    if not gclosed:
+        return fs
+    return lambda d: d in gclosed or bool(fs and fs(d))
+
+
 def frozen_on(con, player_id, d):
     sk = _freeze_skipper(freeze_ranges(con, player_id))
     return bool(sk and sk(_d(d)))
@@ -645,8 +680,7 @@ def sub_progress(con, sub, settings=None):
     # legacy: freezes before player_freezes existed shifted the calendar by N days
     paused = int(sub["paused_days"]) if ("paused_days" in sub.keys() and sub["paused_days"]) else 0
     today = date.today()
-    sched = session_dates(sub["start_date"], total, settings,
-                          _freeze_skipper(freeze_ranges(con, sub["player_id"])))
+    sched = session_dates(sub["start_date"], total, settings, player_skipper(con, sub["player_id"], settings))
     if sched:
         expiry_iso = (sched[-1] + timedelta(days=paused)).isoformat()
         cutoff = today - timedelta(days=paused)
@@ -1397,21 +1431,30 @@ def checkin_token(con, token):
     return row
 
 
-def cancel_session(con, on, note="", settings=None):
-    """Cancel a training day: it becomes a day off (every package moves forward
-    one session) and any attendance already marked that day is removed.
-    Returns the number of attendance marks deleted."""
+def cancel_session(con, on, note="", settings=None, group_id=None):
+    """Cancel a session: the whole day for every group (group_id None), or only one
+    group's session. Packages of the players affected move forward one session and
+    attendance already marked for it is removed. Returns the number of marks deleted."""
     settings = settings or get_settings()
-    days = [c for c in (settings.get("closed_days") or []) if isinstance(c, dict) and c.get("date") != on]
-    days.append({"date": on, "note": (note or "").strip()[:60]})
+    note = (note or "").strip()[:60]
+    days = [c for c in (settings.get("closed_days") or []) if isinstance(c, dict)]
+    if group_id:
+        group_id = int(group_id)
+        days = [c for c in days if not (c.get("date") == on and c.get("group_id") == group_id)]
+        days.append({"date": on, "note": note, "group_id": group_id})
+        where, args = "session_date=? AND group_id=?", (on, group_id)
+    else:
+        days = [c for c in days if c.get("date") != on]      # the whole day replaces any group cancels
+        days.append({"date": on, "note": note})
+        where, args = "session_date=?", (on,)
     settings["closed_days"] = days
     save_settings(settings)
-    rows = con.execute("SELECT id, player_id, COALESCE(trial,0) trial FROM attendance WHERE session_date=?",
-                       (on,)).fetchall()
+    rows = con.execute(f"SELECT id, player_id, COALESCE(trial,0) trial FROM attendance WHERE {where}",
+                       args).fetchall()
     for r in rows:
         if r["trial"]:
             con.execute("UPDATE players SET trial_used=0 WHERE id=?", (r["player_id"],))
-    con.execute("DELETE FROM attendance WHERE session_date=?", (on,))
+    con.execute(f"DELETE FROM attendance WHERE {where}", args)
     con.commit()
     settings = get_settings()
     for p in {r["player_id"] for r in rows}:
@@ -1454,8 +1497,8 @@ def weekly_report(con, start=None, settings=None):
     w1 = w0 + timedelta(days=6)
     a, b = w0.isoformat(), w1.isoformat()
     held = [x.isoformat() for x in sessions_between(w0, min(w1, date.today()), settings)] if w0 <= date.today() else []
-    cancelled = sorted(c["date"] for c in (settings.get("closed_days") or [])
-                       if isinstance(c, dict) and a <= c.get("date", "") <= b)
+    cancelled = sorted({c["date"] for c in (settings.get("closed_days") or [])
+                       if isinstance(c, dict) and a <= c.get("date", "") <= b})
     att = con.execute("SELECT SUM(status='present') p, SUM(status='absent') ab, SUM(status='excused') ex, "
                       "SUM(unpaid) u, SUM(COALESCE(trial,0)) tr FROM attendance WHERE session_date BETWEEN ? AND ?",
                       (a, b)).fetchone()
@@ -1529,8 +1572,8 @@ def month_report(con, month=None, settings=None):
         if gp or gab:
             groups.append({"name_en": g["name_en"], "name_ar": g["name_ar"], "present": gp, "absent": gab,
                            "rate": round(gp * 100 / (gp + gab)) if (gp + gab) else None})
-    cancelled = sorted(c["date"] for c in (settings.get("closed_days") or [])
-                       if isinstance(c, dict) and a <= c.get("date", "") <= b)
+    cancelled = sorted({c["date"] for c in (settings.get("closed_days") or [])
+                       if isinstance(c, dict) and a <= c.get("date", "") <= b})
     owed = money_owed(con, settings)
     salary_left = round(sum(c["salary"]["left"] for c in coaches), 2)
     rep = {"month": month, "start": a, "end": b, "fin": fin, "payments": pays, "salary_paid": paid_out,

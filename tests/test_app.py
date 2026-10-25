@@ -335,7 +335,12 @@ def gate_legacy():
     check(r["ok"] and db.player_balance(con, p2) == 5, "partial payment -> 5 owed")
     check(con.execute("SELECT unpaid FROM attendance WHERE player_id=?", (p2,)).fetchone()["unpaid"] == 0,
           "backdated renewal clears unpaid")
-    # session cost log + sponsorship income + events
+    # session cost log + sponsorship income + events (Wolves starts with no prices: set two)
+    st = db.get_settings()
+    st["cost_presets"] = [{"key": "court_lights", "name_en": "Court + lights", "name_ar": "ملعب مع إنارة", "price": 10,
+                           "category": "court_rent"},
+                          {"key": "water", "name_en": "Water", "name_ar": "مي", "price": 1.5, "category": "water"}]
+    db.save_settings(st)
     a.post("/expenses/session-log", data={"date": iso(0), "qty_court_lights": 2, "qty_water": 2})
     check(round(sum(e["amount"] for e in db.session_costs_on(con, iso(0))), 2) == 23.0, "court 2x10 + water 2x1.5")
     bal0 = db.cash_balance(con)
@@ -380,7 +385,54 @@ def gate_monthend():
     return "GATE_MONTHEND_OK"
 
 
-GATES = {"monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
+def gate_settings():
+    set_days(ALL7)
+    a = admin()
+    st = db.get_settings()
+    check(st["monthly_price"] == 85 and st["bundles"][0]["price"] == 85, "Wolves price is 85 JD, not Dream's 20")
+    check(st.get("cost_presets") == [], "no Dream court/water prices")
+    check("deduct_on_absence" not in a.get("/settings").get_data(as_text=True), "dead absence checkbox gone")
+    base = {"admin_pin": "0000", "monthly_price": 85, "sessions_per_month": 12, "expiry_days": 35}
+    a.post("/settings", data={**base, "bundles_form": "1", "presets_form": "1",
+                              "bundle_name_en": "Monthly", "bundle_name_ar": "شهري", "bundle_sessions": 12, "bundle_price": 85,
+                              "preset_name_en": "Court", "preset_name_ar": "ملعب", "preset_price": 7, "preset_category": "court_rent"})
+    check(len(db.get_settings()["cost_presets"]) == 1, "price row saved")
+    a.post("/settings", data={**base, "bundles_form": "1", "presets_form": "1",
+                              "bundle_name_en": "Monthly", "bundle_name_ar": "شهري", "bundle_sessions": 12, "bundle_price": 85})
+    check(db.get_settings()["cost_presets"] == [], "deleting every price row really deletes them")
+    # absences use up sessions (calendar packages)
+    con = db.get_db()
+    pid = new_player(con, "Absent Kid", gid=1)
+    sub_id, _ = db.create_subscription(con, pid, iso(-3), price=85, sessions_total=12, amount=85)
+    sub = con.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
+    db.mark_attendance(con, pid, iso(-1), 1, "absent", "admin")
+    check(db.sub_progress(con, sub)["used"] == 4, "absences still use up sessions")
+    # cancel only one group's session: that group's package moves, the other group's doesn't
+    other = new_player(con, "Other Group Kid", gid=2)
+    osub_id, _ = db.create_subscription(con, other, iso(-3), price=85, sessions_total=12, amount=85)
+    osub = con.execute("SELECT * FROM subscriptions WHERE id=?", (osub_id,)).fetchone()
+    e1, o1 = db.sub_progress(con, sub)["expiry"], db.sub_progress(con, osub)["expiry"]
+    r = a.post("/api/attendance/cancel-day", json={"date": iso(-1), "group_id": 1}).get_json()
+    check(r["ok"] and r["removed"] == 1, "group cancel removes that group's mark")
+    check(db.sub_progress(con, sub)["expiry"] > e1, "group 1 package moves forward")
+    check(db.sub_progress(con, osub)["expiry"] == o1, "group 2 package unchanged")
+    body = a.get("/attendance").get_data(as_text=True)
+    check(f'"{iso(-1)}|1"' in body and "w_cancel_all_day" not in body, "attendance knows the group cancel")
+    a.post("/settings/closed-days", data={"date": iso(-1), "remove": "1", "group_id": "1"})
+    check(db.sub_progress(con, sub)["expiry"] == e1, "removing the group cancel restores it")
+    # schools: Amman list + any school typed once
+    con.execute("UPDATE players SET school='Zarqa Star School' WHERE id=?", (pid,))
+    con.commit()
+    form = a.get("/players/new").get_data(as_text=True)
+    check("Amman Baccalaureate School" in form and "Zarqa Star School" in form, "school suggestions: Amman + saved")
+    # players filters as dropdowns
+    page = a.get("/players?status=renewal&school=__all").get_data(as_text=True)
+    check('value="renewal" selected' in page, "status dropdown: needs renewal")
+    con.close()
+    return "GATE_SETTINGS_OK"
+
+
+GATES = {"settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
          "trials": gate_trials, "cancel": gate_cancel, "pages": gate_pages, "legacy": gate_legacy}
 
 if __name__ == "__main__":

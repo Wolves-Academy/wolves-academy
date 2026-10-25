@@ -451,7 +451,11 @@ def players_page():
     gender = request.args.get("gender") or ""
     status = request.args.get("status") or ""
     renewal = request.args.get("renewal") == "1"
+    if status == "renewal":                        # the Status dropdown's "Needs renewal"
+        status, renewal = "", True
     school = request.args.get("school")            # None = any, "" = no school set
+    if school == "__all":
+        school = None
     sort = request.args.get("sort") if request.args.get("sort") in ("name", "school", "group", "age") else "name"
 
     gcol = "COALESCE(NULLIF(g.name_en,''), g.name_ar)" if current_lang() == "en" else "COALESCE(NULLIF(g.name_ar,''), g.name_en)"
@@ -553,8 +557,10 @@ def player_form(pid=None):
             return redirect(url_for("player_card", pid=new_id))
     groups = con.execute("SELECT * FROM groups").fetchall()
     st = db.get_settings()
-    schools = [r["school"] for r in con.execute(
+    used = [r["school"] for r in con.execute(
         "SELECT DISTINCT school FROM players WHERE COALESCE(school,'')!='' ORDER BY school").fetchall()]
+    # schools already used first (incl. any typed once), then the known Amman list
+    schools = used + sorted(s for s in AMMAN_SCHOOLS if s.lower() not in {u.lower() for u in used})
     con.close()
     return render_template("player_form.html", player=player, groups=groups, error=error,
                            settings=st, today=date.today().isoformat(), schools=schools, form=request.form)
@@ -798,8 +804,10 @@ def attendance_page():
     schedule = [{"from": f.isoformat(), "days": [n for n in db.WEEKDAY_NAMES if db._WD[n] in w]}
                 for f, w in db.schedule_entries(st)]
     closed = sorted(d.isoformat() for d in db.closed_dates(st))
+    closed_groups = [f'{c["date"]}|{c["group_id"]}' for c in st.get("closed_days") or []
+                     if isinstance(c, dict) and c.get("group_id")]
     return render_template("attendance.html", groups=groups, default_date=default_date,
-                           today=default_date, schedule=schedule, closed=closed)
+                           today=default_date, schedule=schedule, closed=closed, closed_groups=closed_groups)
 
 
 @app.route("/api/attendance")
@@ -1004,10 +1012,9 @@ def settings_page():
     saved = False
     if request.method == "POST":
         f = request.form
-        st["monthly_price"] = float(f.get("monthly_price") or 20)
+        st["monthly_price"] = float(f.get("monthly_price") or 85)
         st["sessions_per_month"] = int(f.get("sessions_per_month") or 12)
         st["expiry_days"] = int(f.get("expiry_days") or 35)
-        st["deduct_on_absence"] = bool(f.get("deduct_on_absence"))
         new_days = f.getlist("training_days")
         if new_days:
             # schedule changes apply from a date, so past sessions never move
@@ -1039,7 +1046,8 @@ def settings_page():
                                 "sessions": int(b_se[i] or 1), "price": float(b_pr[i] or 0)})
             except (ValueError, IndexError):
                 continue
-        if bundles:
+        # the form marks each list, so deleting every row really saves an empty list
+        if f.get("bundles_form"):
             st["bundles"] = bundles
         # session cost presets (court / lights / water ...), priced per unit
         p_key = f.getlist("preset_key"); p_en = f.getlist("preset_name_en"); p_ar = f.getlist("preset_name_ar")
@@ -1058,7 +1066,7 @@ def settings_page():
             cat = (p_cat[i] if i < len(p_cat) else "") or "other"
             presets.append({"key": key, "name_en": name_en or name_ar, "name_ar": name_ar or name_en,
                             "price": price, "category": cat if cat in EXPENSE_CATEGORIES else "other"})
-        if p_en:
+        if f.get("presets_form"):
             st["cost_presets"] = presets
         db.save_settings(st)
         saved = True
@@ -1085,7 +1093,8 @@ def closed_days_save():
     days = [c for c in (st.get("closed_days") or []) if isinstance(c, dict)]
     d = _iso(request.form.get("date"))
     if request.form.get("remove") and d:
-        days = [c for c in days if c.get("date") != d]
+        gid = int(request.form.get("group_id") or 0) or None
+        days = [c for c in days if not (c.get("date") == d and (c.get("group_id") or None) == gid)]
     elif d:
         days = [c for c in days if c.get("date") != d]
         days.append({"date": d, "note": (request.form.get("note") or "").strip()[:60]})
@@ -1309,7 +1318,23 @@ def ai_insight_rev(lang, dirn, rev, prev):
 # ---------------- finance: coaches, salaries, expenses, profit ----------------
 
 # preset expense categories (label comes from i18n as exp_cat_<key>)
-EXPENSE_CATEGORIES = ["court_rent", "water", "equipment", "transport", "utilities",
+# well-known Amman schools for the player form's school suggestions; any other
+# school typed once is kept (it comes back from the players table)
+AMMAN_SCHOOLS = [
+    "Abdul Hamid Sharaf School", "Ahliyyah School for Girls", "Al Ittihad Schools", "Al Manhal International School",
+    "Al Rawabi School", "Al-Asriya Schools", "Al-Ra'ed Al-Arabi School", "Alliance Academy Jordan",
+    "American Community School", "Amman Academy", "Amman Baccalaureate School", "Amman National School",
+    "Bishop's School", "Cambridge High School", "Dar Al-Arqam Schools", "De La Salle College (Frères)",
+    "International Academy Amman", "International Community School", "International School of Choueifat Amman",
+    "Islamic Educational College", "Islamic Scientific College", "Jordan Baptist School", "Jubilee School",
+    "King Abdullah II School for Excellence", "King's Academy", "Lycée Français International d'Amman",
+    "Mada International Academy", "Mashrek International School", "Modern American School",
+    "Modern Montessori School", "National Orthodox School", "New English School", "Our Lady of Nazareth School",
+    "Philadelphia National Schools", "Rosary Sisters School", "Sands National Academy", "Terra Santa College",
+    "Theodor Schneller School", "University of Jordan Model School", "Public school",
+]
+
+EXPENSE_CATEGORIES =["court_rent", "water", "equipment", "transport", "utilities",
                       "maintenance", "referees", "marketing", "other"]
 
 @app.route("/finance")
@@ -1729,7 +1754,8 @@ def api_cancel_day():
     if not on:
         return jsonify({"error": "date"}), 400
     con = db.get_db()
-    removed = db.cancel_session(con, on, data.get("note") or "")
+    gid = data.get("group_id")
+    removed = db.cancel_session(con, on, data.get("note") or "", group_id=int(gid) if str(gid or "").isdigit() else None)
     con.close()
     return jsonify({"ok": True, "removed": removed})
 

@@ -57,6 +57,7 @@
       <div class="sheet-bd ledger-rule">
         <div class="label mb-1">{{ t('bundles_title') }}</div>
         <p class="sub mb-3">{{ t('bundles_hint') }}</p>
+        <input type="hidden" name="bundles_form" value="1">
         <div id="bundleRows" class="grid gap-2">{% for b in st.bundles %}{{ bundle_row(b) }}{% endfor %}</div>
         <button type="button" onclick="addRow('bundleRows','tplBundle')" class="btn btn-line btn-xs mt-3">{{ icon('plus','w-3.5 h-3.5') }}{{ t('add_bundle') }}</button>
       </div>
@@ -99,6 +100,7 @@
       <div class="sheet-hd"><h2 class="h-sec">{{ t('m_presets') }}</h2></div>
       <div class="sheet-bd">
         <p class="sub mb-3">{{ t('m_presets_hint') }}</p>
+        <input type="hidden" name="presets_form" value="1">
         <div id="presetRows" class="grid gap-2">{% for p in st.cost_presets or [] %}{{ preset_row(p) }}{% endfor %}</div>
         <button type="button" onclick="addRow('presetRows','tplPreset')" class="btn btn-line btn-xs mt-3">{{ icon('plus','w-3.5 h-3.5') }}{{ t('m_add_preset') }}</button>
       </div>
@@ -119,7 +121,6 @@
           <textarea name="template_renewal" rows="3" dir="rtl" class="inp">{{ st.template_renewal }}</textarea></label>
         <label class="field"><span class="label">{{ t('tpl_absence') }}</span>
           <textarea name="template_absence" rows="2" dir="rtl" class="inp">{{ st.template_absence }}</textarea></label>
-        <label class="check"><input type="checkbox" name="deduct_on_absence" {% if st.deduct_on_absence %}checked{% endif %}> {{ t('deduct_absence') }}</label>
       </div>
     </section>
 
@@ -143,9 +144,11 @@
       {% for c in closed %}
       <div class="row" style="min-height:42px">
         <span class="num w-28 shrink-0">{{ c.date }}</span>
-        <span class="flex-1 sub truncate">{{ c.note }}</span>
+        <span class="flex-1 sub truncate">
+          {%- if c.group_id %}{% set cg = groups|selectattr('id', 'equalto', c.group_id)|first %}<span class="tag tag-mute me-1">{{ (cg.name_ar if lang == 'ar' else cg.name_en) if cg else '-' }}</span>{% else %}<span class="tag tag-mute me-1">{{ t('w_all_groups_day') }}</span>{% endif %}{{ c.note }}</span>
         <form method="post" action="/settings/closed-days">
           <input type="hidden" name="date" value="{{ c.date }}"><input type="hidden" name="remove" value="1">
+          <input type="hidden" name="group_id" value="{{ c.group_id or '' }}">
           <button class="btn btn-quiet btn-xs">{{ t('delete') }}</button></form>
       </div>
       {% else %}<div class="empty">{{ t('m_no_days_off') }}</div>{% endfor %}

@@ -9,8 +9,10 @@ EN = {
     "w_checkin_btn": "I'm on court", "w_checked_in": "You're checked in",
     "w_checked_in_at": "Since {t}", "w_checked_in_toast": "Checked in. Have a good session.",
     "w_cancel_session": "Cancel this session",
-    "w_cancel_explain": "Use this for rain, holidays or a closed court. Attendance marked on this day is removed "
-                        "and every player's package moves forward one session.",
+    "w_cancel_explain": "Rain, a holiday or a closed court: nobody loses a session. Packages of the players "
+                        "affected move forward one session, and attendance already marked is removed.",
+    "w_cancel_only_group": "Cancel only {g}", "w_cancel_all_day": "Close all sessions this day",
+    "w_all_groups_day": "All groups", "wp_excel_tools": "Excel import / export", "wp_all_genders": "Boys & girls",
     "w_cancel_reason": "Reason (optional)", "w_cancel_reason_ph": "e.g. Rain, Eid, court closed",
     "w_cancel_confirm": "Cancel session", "w_cancelled_toast": "Session cancelled. {n} marks removed.",
     "w_coach_codes_hint": "Coaches sign in with their own codes. Manage them in",
@@ -25,8 +27,10 @@ AR = {
     "w_checkin_btn": "أنا بالملعب", "w_checked_in": "حضورك مسجّل",
     "w_checked_in_at": "من الساعة {t}", "w_checked_in_toast": "تسجّل حضورك. يعطيك العافية.",
     "w_cancel_session": "إلغاء هالحصة",
-    "w_cancel_explain": "للمطر أو العطل أو إذا الملعب مسكّر. الحضور المسجّل بهاليوم بنشال، "
-                        "واشتراك كل لاعب بيتأجل حصة.",
+    "w_cancel_explain": "مطر أو عطلة أو الملعب مسكّر: ولا لاعب بخسر حصة. اشتراك اللاعبين اللي إلهم علاقة "
+                        "بيتأجل حصة، والحضور المسجّل بنشال.",
+    "w_cancel_only_group": "ألغِ حصة {g} بس", "w_cancel_all_day": "سكّر كل حصص هاليوم",
+    "w_all_groups_day": "كل المجموعات", "wp_excel_tools": "استيراد وتصدير إكسل", "wp_all_genders": "شباب وبنات",
     "w_cancel_reason": "السبب (اختياري)", "w_cancel_reason_ph": "مثلاً: مطر، عيد، الملعب مسكّر",
     "w_cancel_confirm": "ألغِ الحصة", "w_cancelled_toast": "انلغت الحصة. انشال {n} تسجيل.",
     "w_coach_codes_hint": "كل مدرب بيدخل بكوده الخاص. بتديرهم من",
