@@ -4,6 +4,8 @@ Academy management app for Wolves Sports Academy: players, attendance, packages,
 payments, coaches (own logins, QR / WhatsApp check-in, salaries), finance, reports.
 English and Jordanian Arabic. Installs on phones as an app (PWA).
 
+**Open the app: https://wolves-academy1.vercel.app**
+
 ## Where it runs
 
 | Part | Service |
