@@ -4,6 +4,7 @@
 Runs locally on the laptop; coaches reach it from anywhere through a
 Cloudflare quick tunnel (started automatically if cloudflared.exe is present).
 """
+import hashlib
 import io
 import json
 import os
@@ -35,7 +36,11 @@ if os.name != "nt":
         _time.tzset()
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("WSA_SECRET") or "wolves-sports-academy-local-secret-2026"
+# the repo is public, so online the key must come from the host: WSA_SECRET, else a value
+# only the server knows (the integration's JWT secret, or a hash of the database URL)
+app.secret_key = (os.environ.get("WSA_SECRET") or os.environ.get("SUPABASE_JWT_SECRET")
+                  or (hashlib.sha256(("wsa:" + db._pg_url()).encode()).hexdigest() if db._pg_url() else None)
+                  or "wolves-sports-academy-local-secret-2026")
 app.json.ensure_ascii = False
 
 # bump this string whenever the UI changes so you can confirm a fresh load
