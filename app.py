@@ -118,6 +118,21 @@ def require_role(*roles):
     return deco
 
 
+@app.route("/healthz")
+def healthz():
+    """Where the app runs vs where the database is, and one round trip's cost (no secrets)."""
+    import time as _t
+    con = db.get_db()
+    ms = []
+    for _ in range(3):
+        t0 = _t.perf_counter()
+        con.execute("SELECT 1").fetchone()
+        ms.append(round((_t.perf_counter() - t0) * 1000, 1))
+    con.close()
+    host = urllib.parse.urlparse(db._pg_url()).hostname if db.is_postgres() else "sqlite"
+    return jsonify({"app_region": os.environ.get("VERCEL_REGION", "local"), "db_host": host, "db_ms": ms})
+
+
 @app.route("/sw.js")
 def service_worker():
     """Served from the root so it controls the whole app (installable PWA)."""
