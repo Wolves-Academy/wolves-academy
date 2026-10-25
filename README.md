@@ -1,50 +1,38 @@
-# DA — Wolves Sports Academy Manager
+# Wolves Sports Academy Manager
 
-Basketball academy management app — Mafraq, Jordan. A temporary tool until the real mobile app is ready.
+Academy management app for Wolves Sports Academy: players, attendance, packages,
+payments, coaches (own logins, QR / WhatsApp check-in, salaries), finance, reports.
+English and Jordanian Arabic. Installs on phones as an app (PWA).
 
-## Two ways to run it
+## Where it runs
 
-| Mode | How | When to use |
-|---|---|---|
-| **Online (recommended)** | Deploy once to PythonAnywhere — see [DEPLOY.md](DEPLOY.md) | Permanent URL, works from any phone, laptop can stay off |
-| **Local** | Double-click `start.bat` on the laptop | Fallback / testing; laptop must stay on and online |
+| Part | Service |
+|---|---|
+| App (Python / Flask) | **Vercel**, deployed automatically on every push to `main` |
+| Database | **Supabase** Postgres, via the `DATABASE_URL` environment variable |
 
-## Local mode
+GitHub Pages can't run this app; it only serves static files. Use the Vercel link.
+Setup steps: [DEPLOY.md](DEPLOY.md).
 
-`start.bat` starts the server and a Cloudflare tunnel that prints a public link
-(`https://xxxx.trycloudflare.com`) reachable from any network. Open
-`http://127.0.0.1:8000/qr` on the laptop to get the QR for coaches.
-The tunnel link changes on every restart — send coaches the new one each time.
-On the laptop itself, `http://127.0.0.1:8000` logs you in as admin with no PIN.
+## Environment variables (Vercel)
 
-## Language
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | Supabase **Transaction pooler** URI (port 6543) with the database password |
+| `WSA_SECRET` | any long random text (keeps logins secure) |
 
-The UI is English by default. The AR / EN button in the top bar switches the whole
-app between English (LTR) and Jordanian Arabic (RTL); the choice is remembered per
-device. WhatsApp messages to parents and the session summary always stay in Arabic.
+Tables are created automatically on first start.
 
-## PINs
+## Sign in
 
-| Role | Default PIN | Access |
-|---|---|---|
-| Coach | `1234` | Attendance screen only |
-| Admin | `0000` | Everything |
+- **Admin:** PIN `0000` on first start. Change it right away in Settings.
+- **Coaches:** each coach signs in with a personal code the admin sets in **Coaches**.
 
-Change both in Settings before first real use — the PIN is the only protection on
-any link that is reachable from the internet.
+## Admin guide
 
-## Subscription rules
+Everything the admin can do, step by step: [docs/Wolves-Admin-Guide.pdf](docs/Wolves-Admin-Guide.pdf)
 
-- 20 JD = 12 sessions, valid 35 days.
-- Present = one session deducted. Absent/excused = no deduction (a settings flag can enable deduction on absence).
-- A player without a subscription can still be marked present — they appear in the red "Unpaid" list on the dashboard.
-- Freezing pauses the clock: on unfreeze, the expiry date extends by the frozen duration.
+## Local development
 
-## Backups
-
-- Automatic daily + on every start, into `backups/` (last 30 kept).
-- Full Excel auto-export weekly into `exports/`, plus an "Export all" button on the dashboard.
-
-## First-time player import
-
-From the Players page: download the players template, fill it in Excel, and upload it.
+Without `DATABASE_URL` the app uses a local SQLite file (`academy.db`).
+`start.bat` runs it on the laptop. Tests: `python tests/test_app.py all`.
