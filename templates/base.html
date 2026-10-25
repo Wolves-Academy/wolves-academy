@@ -309,11 +309,9 @@
                 ('/attendance','attendance',t('nav_attendance'), request.path=='/attendance'),
                 ('/players','users',t('nav_players'), request.path.startswith('/players') or request.path.startswith('/groups')),
                 ('/finance','wallet',t('nav_finance'), request.path.startswith('/finance') or request.path.startswith('/payments')),
-                ('/events','calendar',t('nav_events'), request.path.startswith('/events')),
                 ('/analytics','analytics',t('nav_analytics'), request.path.startswith('/analytics'))] %}
 {% else %}
-  {% set NAV = [('/attendance','attendance',t('nav_attendance'), request.path=='/attendance'),
-                ('/events','calendar',t('nav_events'), request.path.startswith('/events'))] %}
+  {% set NAV = [('/attendance','attendance',t('nav_attendance'), request.path=='/attendance')] %}
 {% endif %}
 
 <!-- laptop: side rail -->
@@ -330,6 +328,7 @@
     <a href="/coaches" class="navlink {% if request.path.startswith('/coaches') %}active{% endif %}">{{ icon('whistle','w-[18px] h-[18px]') }}{{ t('w_nav_coaches') }}</a>
     <a href="/reports/weekly" class="navlink {% if request.path.startswith('/reports') %}active{% endif %}">{{ icon('file','w-[18px] h-[18px]') }}{{ t('w_nav_reports') }}</a>
     <a href="/groups" class="navlink {% if request.path.startswith('/groups') %}active{% endif %}">{{ icon('grid','w-[18px] h-[18px]') }}{{ t('nav_groups') }}</a>
+    <a href="/events" class="navlink {% if request.path.startswith('/events') %}active{% endif %}">{{ icon('calendar','w-[18px] h-[18px]') }}{{ t('nav_events') }}</a>
     <a href="/settings" class="navlink {% if request.path.startswith('/settings') %}active{% endif %}">{{ icon('settings','w-[18px] h-[18px]') }}{{ t('settings') }}</a>
     {% endif %}
   </nav>
@@ -366,6 +365,7 @@
         <a class="row" href="/reports/weekly">{{ icon('file','w-4 h-4') }}{{ t('w_report_weekly') }}</a>
         <a class="row" href="/reports/trials">{{ icon('file','w-4 h-4') }}{{ t('w_report_trials') }}</a>
         <a class="row" href="/groups">{{ icon('grid','w-4 h-4') }}{{ t('nav_groups') }}</a>
+        <a class="row" href="/events">{{ icon('calendar','w-4 h-4') }}{{ t('nav_events') }}</a>
         <a class="row" href="/settings">{{ icon('settings','w-4 h-4') }}{{ t('settings') }}</a>
         <a class="row" href="/payments">{{ icon('file','w-4 h-4') }}{{ t('nav_payments') }}</a>
         <a class="row" href="/qr">{{ icon('qr','w-4 h-4') }}{{ t('qr_link') }}</a>
@@ -380,16 +380,6 @@
 {% endif %}
 
 <main class="page"><div class="wrap">
-<!-- install as an app (Android: native prompt, iPhone: Share > Add to Home Screen) -->
-<div id="installBar" class="sheet hidden mb-4 flex items-center gap-3 px-3 py-2.5">
-  <img src="/static/icon-192.png" alt="" class="w-10 h-10 rounded-lg shrink-0">
-  <div class="flex-1 min-w-0">
-    <div class="font-bold text-[14px]">{{ t('w_install_title') }}</div>
-    <div class="sub" id="installHint">{{ t('w_install_sub') }}</div>
-  </div>
-  <button id="installBtn" class="btn btn-acc btn-sm hidden">{{ t('w_install_btn') }}</button>
-  <button id="installClose" class="btn btn-quiet btn-sm btn-icon" aria-label="{{ t('close') }}">{{ icon('x','w-4 h-4') }}</button>
-</div>
 {% block content %}{% endblock %}
 </div></main>
 
@@ -445,25 +435,31 @@
   document.addEventListener('click', e => { if(e.target.classList && e.target.classList.contains('ovl') && e.target.id!=='botOvl') e.target.classList.remove('open'); });
   // close any open <details> menu when clicking outside it
   document.addEventListener('click', e => { document.querySelectorAll('details.relative[open]').forEach(d => { if(!d.contains(e.target)) d.removeAttribute('open'); }); });
-  // installable app: register the service worker and offer "Install" once per device
-  (function(){
+  // installable app: register the service worker; on a phone browser, ask once to install
+  // Chrome may offer installing before the page finishes loading: keep that offer
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window.__installOffer = e; });
+  document.addEventListener('DOMContentLoaded', function(){   // the popup markup sits below this script
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
     const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    const phone = matchMedia('(pointer: coarse)').matches;
     let snoozed = false; try { snoozed = Date.now() < +(localStorage.getItem('installSnooze') || 0); } catch(e) {}
-    if (standalone || snoozed) return;
-    const bar = document.getElementById('installBar'), btn = document.getElementById('installBtn');
-    document.getElementById('installClose').onclick = () => { bar.classList.add('hidden');
-      try { localStorage.setItem('installSnooze', Date.now() + 14 * 864e5); } catch(e) {} };
-    let deferred = null;
+    if (standalone || !phone || snoozed) return;
+    const $ = id => document.getElementById(id), btn = $('installBtn');
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let deferred = window.__installOffer || null;
+    if (deferred) btn.classList.remove('hidden');
+    const close = () => closeSheet('installPop');
+    $('installLater').onclick = () => { close(); try { localStorage.setItem('installSnooze', Date.now() + 3 * 864e5); } catch(e) {} };
     window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e;
-      btn.classList.remove('hidden'); bar.classList.remove('hidden'); });
-    btn.onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; bar.classList.add('hidden'); };
-    window.addEventListener('appinstalled', () => bar.classList.add('hidden'));
-    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
-      document.getElementById('installHint').textContent = {{ t('w_install_ios')|tojson }};
-      bar.classList.remove('hidden');
-    }
-  })();
+      btn.classList.remove('hidden'); $('installAndroid').classList.add('hidden'); });
+    btn.onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; close(); };
+    window.addEventListener('appinstalled', close);
+    setTimeout(() => {
+      if (ios) { $('installIos').classList.remove('hidden'); $('installIosNote').classList.remove('hidden'); }
+      else if (!deferred) $('installAndroid').classList.remove('hidden');   // Chrome hasn't offered its prompt (yet)
+      openSheet('installPop');
+    }, 1200);
+  });
   // tallies fill box by box (the scorer's pen)
   document.querySelectorAll('.tally-anim').forEach(t => t.querySelectorAll('i').forEach((b,i)=>b.style.setProperty('--i', i)));
 </script>
@@ -514,6 +510,25 @@ const Bot = {
 };
 </script>
 {% endif %}
+<!-- first open in a phone browser: ask to install (Android: native prompt, iPhone: Share > Add to Home Screen) -->
+<div id="installPop" class="ovl" role="dialog" aria-modal="true" aria-labelledby="installT">
+  <div class="panel">
+    <div class="panel-bd grid gap-3 justify-items-center text-center !py-6">
+      <img src="/static/icon-192.png" alt="" class="w-16 h-16 rounded-2xl">
+      <h3 id="installT" class="font-extrabold text-[18px]">{{ t('w_install_title') }}</h3>
+      <p class="sub -mt-1">{{ t('w_install_sub') }}</p>
+      <ol id="installIos" class="hidden w-full text-start grid gap-2 sheet sheet-bd list-decimal ps-8">
+        <li>{{ t('w_ios_step1') }} <svg class="inline w-4 h-4 align-[-3px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m8 7 4-4 4 4"/><path d="M8 11H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-2"/></svg></li><li>{{ t('w_ios_step2') }}</li><li>{{ t('w_ios_step3') }}</li>
+      </ol>
+      <p id="installIosNote" class="hidden sub text-[12.5px]">{{ t('w_ios_safari') }}</p>
+      <ol id="installAndroid" class="hidden w-full text-start grid gap-2 sheet sheet-bd list-decimal ps-8">
+        <li>{{ t('w_and_step1') }}</li><li>{{ t('w_and_step2') }}</li>
+      </ol>
+      <button id="installBtn" class="btn btn-acc btn-block hidden">{{ t('w_install_btn') }}</button>
+      <button id="installLater" class="btn btn-quiet btn-block">{{ t('w_install_later') }}</button>
+    </div>
+  </div>
+</div>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -41,6 +41,14 @@ EN["w_days_month"] = "Days this month"
 AR["w_days_month"] = "أيام هالشهر"
 
 EN.update({"w_install_title": "Install Wolves on your phone", "w_install_sub": "Opens like an app, full screen, from your home screen.",
-           "w_install_btn": "Install", "w_install_ios": "Tap the Share button, then Add to Home Screen."})
+           "w_install_btn": "Install", "w_install_ios": "Tap the Share button, then Add to Home Screen.",
+           "w_install_later": "Later",
+           "w_ios_step1": "Tap Share", "w_ios_step2": "Scroll down and tap “Add to Home Screen”", "w_ios_step3": "Tap “Add”",
+           "w_ios_safari": "Don't see it? You may be inside WhatsApp: open this link in Safari first.",
+           "w_and_step1": "Tap the ⋮ menu at the top of Chrome", "w_and_step2": "Tap “Install app” or “Add to Home screen”"})
 AR.update({"w_install_title": "نزّل تطبيق Wolves على تلفونك", "w_install_sub": "بيفتح زي التطبيق، شاشة كاملة، من الشاشة الرئيسية.",
-           "w_install_btn": "تنزيل", "w_install_ios": "اكبس زر المشاركة، بعدين إضافة إلى الشاشة الرئيسية."})
+           "w_install_btn": "تنزيل", "w_install_ios": "اكبس زر المشاركة، بعدين إضافة إلى الشاشة الرئيسية.",
+           "w_install_later": "بعدين",
+           "w_ios_step1": "اكبس زر المشاركة", "w_ios_step2": "انزل لتحت واكبس «إضافة إلى الشاشة الرئيسية»", "w_ios_step3": "اكبس «إضافة»",
+           "w_ios_safari": "مش طالع معك؟ يمكن فاتح الرابط من الواتساب: افتحه بسفاري أول.",
+           "w_and_step1": "اكبس قائمة ⋮ فوق بكروم", "w_and_step2": "اكبس «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»"})
