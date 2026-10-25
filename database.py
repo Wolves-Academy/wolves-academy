@@ -200,7 +200,15 @@ EXP_ONCE, EXP_MONTHLY, EXP_PER_SESSION = 0, 1, 2
 # ---------- connection: SQLite locally, Postgres (Supabase) when DATABASE_URL is set ----------
 
 def _pg_url():
-    return os.environ.get("DATABASE_URL", "").strip()
+    # DATABASE_URL set by hand, or POSTGRES_URL from the Supabase <-> Vercel integration
+    url = (os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or "").strip()
+    if "?" in url:
+        # the integration adds Prisma/Supabase-only params (supa=, pgbouncer=) that libpq rejects
+        from urllib.parse import parse_qsl, urlencode
+        base, q = url.split("?", 1)
+        keep = [(k, v) for k, v in parse_qsl(q) if k not in ("supa", "pgbouncer", "connection_limit")]
+        url = base + ("?" + urlencode(keep) if keep else "")
+    return url
 
 
 class Row(dict):
