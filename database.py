@@ -303,7 +303,8 @@ def _pg_pool():
         from psycopg_pool import ConnectionPool
         # Supabase's transaction pooler does not support prepared statements
         _POOL[url] = ConnectionPool(url, min_size=1, max_size=int(os.environ.get("DB_POOL_MAX", "8")),
-                                    kwargs={"autocommit": True, "prepare_threshold": None}, open=True)
+                                    kwargs={"autocommit": True, "prepare_threshold": None}, open=True,
+                                    timeout=10)
     return _POOL[url]
 
 

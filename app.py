@@ -1902,8 +1902,32 @@ def start_tunnel():
     threading.Thread(target=run, daemon=True).start()
 
 
+def _startup_error(e):
+    """Readable reason on the page instead of a bare 500 (credentials hidden)."""
+    if db._pg_url():
+        try:  # the pool only says "timeout"; one direct attempt gives the real reason
+            import psycopg
+            psycopg.connect(db._pg_url(), connect_timeout=8).close()
+        except Exception as direct:  # noqa: BLE001
+            e = direct
+    msg = re.sub(r"://[^@\s]*@", "://***@", f"{type(e).__name__}: {e}")
+    msg = re.sub(r"password=\S+", "password=***", msg)
+    if not db._pg_url() and os.environ.get("VERCEL"):
+        msg = "No database configured: set DATABASE_URL (Supabase Transaction pooler URI) in Vercel. " + msg
+    print("[startup]", msg)
+
+    @app.before_request
+    def _db_down():
+        from markupsafe import escape
+        return (f"<h1>Wolves Sports Academy is not connected to its database</h1><p>{escape(msg)}</p>"
+                "<p>Fix the Vercel environment variables, then redeploy.</p>", 503)
+
+
 # idempotent, also covers WSGI hosting where __main__ never runs
-db.init_db()
+try:
+    db.init_db()
+except Exception as e:  # noqa: BLE001 - surfaced on every page until fixed
+    _startup_error(e)
 
 if __name__ == "__main__":
     db.backup_db()
