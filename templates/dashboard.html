@@ -203,6 +203,6 @@
 const CONFIRM_REJECT = {{ t('confirm_reject')|tojson }};
 async function approvePlayer(id){ const r=await fetch(`/api/players/${id}/approve`,{method:'POST'}); if(r.ok) removeRow(id); }
 async function rejectPlayer(id){ if(!confirm(CONFIRM_REJECT)) return; const r=await fetch(`/api/players/${id}/reject`,{method:'POST'}); if(r.ok) removeRow(id); }
-function removeRow(id){ document.getElementById('pending-'+id)?.remove(); if(!document.querySelector('[id^="pending-"]')) location.reload(); }
+function removeRow(id){ _rm('pending-'+id); if(!document.querySelector('[id^="pending-"]')) location.reload(); }
 </script>
 {% endblock %}

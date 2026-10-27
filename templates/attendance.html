@@ -11,7 +11,8 @@
   .ptile:active { transform:scale(.98); }
   .ptile .nm { font-weight:800; font-size:15px; line-height:1.2; padding-inline-end:22px; }
   .ptile .meta { margin-top:7px; font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-  .ptile .mk { position:absolute; top:10px; inset-inline-end:10px; width:20px; height:20px; display:grid; place-items:center; }
+  .ptile .mk { position:absolute; top:10px; right:10px; width:20px; height:20px; display:grid; place-items:center; }
+  [dir="rtl"] .ptile .mk { right:auto; left:10px; }
   /* scorer's marks, one ink: present = inked solid, absent = struck out, excused = dashed */
   .ptile.present { background:rgb(var(--ink)); border-color:rgb(var(--ink)); color:rgb(var(--sheet)); }
   .ptile.present .tally i { border-color:rgb(var(--sheet) / .45); } .ptile.present .tally i.on { background:rgb(var(--sheet)); border-color:rgb(var(--sheet)); }

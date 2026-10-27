@@ -180,7 +180,7 @@
 function addRow(listId, tplId){
   const node = document.getElementById(tplId).content.firstElementChild.cloneNode(true);
   document.getElementById(listId).appendChild(node);
-  node.querySelector('input:not([type=hidden])')?.focus();
+  var inp = node.querySelector('input:not([type=hidden])'); if (inp) inp.focus();
 }
 </script>
 {% endblock %}
