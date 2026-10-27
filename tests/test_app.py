@@ -432,7 +432,42 @@ def gate_settings():
     return "GATE_SETTINGS_OK"
 
 
-GATES = {"settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
+def gate_import():
+    """Excel import: template round-trip with school + both parents; header columns in any order."""
+    import io
+    import excel_io
+    from openpyxl import Workbook, load_workbook
+    a = admin()
+    wb = load_workbook(io.BytesIO(a.get("/import/template").data))
+    ws = wb.active
+    ws.append(["Lina Omar Saleh", "2015-03-04", "F", "Jubilee School", "", "Omar Saleh", 791112223,
+               "Huda Saleh", "0782223334", "", ""])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    a.post("/import/players", data={"file": (buf, "p.xlsx")}, content_type="multipart/form-data")
+    con = db.get_db()
+    check(not con.execute("SELECT 1 FROM players WHERE full_name LIKE '%عمر خالد%'").fetchone(),
+          "example row skipped")
+    p = con.execute("SELECT * FROM players WHERE full_name='Lina Omar Saleh'").fetchone()
+    check(p and p["school"] == "Jubilee School" and p["gender"] == "F" and p["birth_date"] == "2015-03-04"
+          and p["guardian_phone"] == "0791112223" and p["parent2_name"] == "Huda Saleh"
+          and p["parent2_phone"] == "0782223334", "template import: school, parents, phone 0 restored")
+    wb = Workbook()
+    wb.active.append(["المدرسة", "العمر", "الاسم", "هاتف الأم"])
+    wb.active.append(["Al-Ahliyya School", 10, "Sami Ali", "0771234567"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    excel_io.import_players(con, buf, db.suggest_group, filename="x.xlsx")
+    p = con.execute("SELECT * FROM players WHERE full_name='Sami Ali'").fetchone()
+    check(p and p["school"] == "Al-Ahliyya School" and p["birth_date"].startswith(str(T.year - 10))
+          and p["parent2_phone"] == "0771234567", "Arabic headers in any order, age -> birth year")
+    con.close()
+    return "GATE_IMPORT_OK"
+
+
+GATES = {"import": gate_import, "settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
          "trials": gate_trials, "cancel": gate_cancel, "pages": gate_pages, "legacy": gate_legacy}
 
 if __name__ == "__main__":

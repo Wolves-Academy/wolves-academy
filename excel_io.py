@@ -123,8 +123,15 @@ def export_all(con):
     return buf.read()
 
 
-PLAYER_TEMPLATE_HEADERS = ["الاسم الكامل*", "تاريخ الميلاد (YYYY-MM-DD)", "الجنس (M/F)", "هاتف اللاعب",
-                           "اسم ولي الأمر", "هاتف ولي الأمر (07XXXXXXXX)", "المجموعة (اسمها بالعربي)", "ملاحظات"]
+PLAYER_TEMPLATE_HEADERS = ["Full name / الاسم الكامل*", "Birth date / تاريخ الميلاد (YYYY-MM-DD)",
+                           "Gender / الجنس (M/F)", "School / المدرسة", "Player phone / هاتف اللاعب",
+                           "Father name / اسم الأب", "Father phone / هاتف الأب",
+                           "Mother name / اسم الأم", "Mother phone / هاتف الأم",
+                           "Group / المجموعة", "Notes / ملاحظات"]
+EXAMPLE_MARK = "احذف هذا الصف"
+
+# Column order used when a file has no header row (older templates / plain lists)
+DEFAULT_COLS = ["name", "birth", "gender", "phone", "guardian_name", "guardian_phone", "group", "notes"]
 
 
 def players_template():
@@ -136,7 +143,8 @@ def players_template():
     for c in ws[1]:
         c.fill = HEADER_FILL
         c.font = HEADER_FONT
-    ws.append(["عمر خالد", "2013-05-01", "M", "", "خالد أحمد", "0791234567", "ناشئين", "مثال — احذف هذا الصف"])
+    ws.append(["عمر خالد", "2013-05-01", "M", "Amman Baccalaureate School", "", "خالد أحمد", "0791234567",
+               "سارة محمود", "0781234567", "", "Example / مثال - " + EXAMPLE_MARK])
     for i in range(1, len(PLAYER_TEMPLATE_HEADERS) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 26
     buf = io.BytesIO()
@@ -145,14 +153,56 @@ def players_template():
     return buf.read()
 
 
+def _field_for(header):
+    """Which player field a header cell means (English or Arabic), or None."""
+    h = (header or "").strip().lower()
+    phone = any(k in h for k in ("phone", "mobile", "هاتف", "موبايل", "رقم"))
+    if any(k in h for k in ("mother", "الأم", "الام", "parent 2")):
+        return "parent2_phone" if phone else "parent2_name"
+    if any(k in h for k in ("father", "guardian", "parent", "الأب", "الاب", "ولي")):
+        return "guardian_phone" if phone else "guardian_name"
+    for field, keys in (("school", ("school", "مدرس")), ("birth", ("birth", "dob", "ميلاد")),
+                        ("age", ("age", "العمر")), ("gender", ("gender", "sex", "الجنس")),
+                        ("group", ("group", "مجموع")), ("notes", ("note", "ملاحظ"))):
+        if any(k in h for k in keys):
+            return field
+    if phone:
+        return "phone"
+    if "name" in h or "اسم" in h:
+        return "name"
+    return None
+
+
+def _header_map(row):
+    """{field: column} when the row is a header row (has a name column), else None."""
+    cols = {}
+    for i, cell in enumerate(row):
+        f = _field_for(cell)
+        if f and f not in cols:
+            cols[f] = i
+    return cols if "name" in cols else None
+
+
+def _phone(v):
+    """Excel drops the leading 0 of Jordanian mobiles (791234567 -> 0791234567)."""
+    v = (v or "").strip()
+    if v.endswith(".0"):
+        v = v[:-2]
+    if len(v) == 9 and v.startswith("7") and v.isdigit():
+        v = "0" + v
+    return v
+
+
 def _norm_cell(v):
+    if isinstance(v, (datetime, date)):
+        return v.strftime("%Y-%m-%d")
     return str(v).strip() if v is not None else ""
 
 
 def _rows_from_xlsx(file_stream):
-    wb = load_workbook(file_stream)
+    wb = load_workbook(file_stream, data_only=True)
     ws = wb.active
-    for row in ws.iter_rows(min_row=2, values_only=True):
+    for row in ws.iter_rows(values_only=True):
         if row and any(c is not None and str(c).strip() for c in row):
             yield [_norm_cell(c) for c in row]
 
@@ -163,16 +213,8 @@ def _rows_from_delimited(file_stream, delimiter):
         # handle a UTF-8 BOM from Excel-exported CSVs
         raw = raw.decode("utf-8-sig", errors="replace")
     lines = [ln for ln in raw.splitlines() if ln.strip()]
-    if not lines:
-        return
-    reader = csv.reader(lines, delimiter=delimiter)
-    rows = list(reader)
-    # drop a header row if the first cell looks like a header label
-    head = (rows[0][0] if rows and rows[0] else "").strip().lower()
-    if head in ("name", "full name", "full_name", "الاسم", "الاسم الكامل", "الاسم الكامل*"):
-        rows = rows[1:]
-    for r in rows:
-        if r and r[0].strip():
+    for r in csv.reader(lines, delimiter=delimiter):
+        if r and any(c.strip() for c in r):
             yield [c.strip() for c in r]
 
 
@@ -189,9 +231,10 @@ def _rows_from_txt(file_stream):
 def import_players(con, file_storage, suggest_group_fn, filename=None):
     """Bulk-load players from .xlsx / .csv / .tsv / .txt.
 
-    Column order (when present): name, birth_date, gender, phone, guardian_name,
-    guardian_phone, group, notes. TXT and single-column files import names only.
-    Returns (imported, skipped, errors).
+    Columns are matched by their header (English or Arabic), in any order: name,
+    birth date or age, gender, school, player phone, father name/phone, mother
+    name/phone, group, notes. Files without a header row use DEFAULT_COLS.
+    TXT imports names only. Returns (imported, skipped, errors).
     """
     filename = (filename or getattr(file_storage, "filename", "") or "").lower()
     stream = getattr(file_storage, "stream", file_storage)
@@ -223,20 +266,25 @@ def import_players(con, file_storage, suggest_group_fn, filename=None):
         groups[(r["name_ar"] or "").strip()] = r["id"]
         groups[(r["name_en"] or "").strip().lower()] = r["id"]
 
-    for i, row in enumerate(row_iter, start=2):
-        name = (row[0] if row else "").strip()
-        if not name or "احذف هذا الصف" in (row[7] if len(row) > 7 else ""):
+    cols = None
+    for i, row in enumerate(row_iter, start=1):
+        if cols is None:
+            cols = _header_map(row)
+            if cols:
+                continue  # header row
+            cols = {f: n for n, f in enumerate(DEFAULT_COLS)}
+        g = lambda f: (row[cols[f]].strip() if f in cols and len(row) > cols[f] and row[cols[f]] else "")
+        name = " ".join(g("name").split())
+        if not name or any(EXAMPLE_MARK in c for c in row):
             continue
         try:
-            g = lambda idx: (row[idx].strip() if len(row) > idx and row[idx] else "")
-            birth = g(1)[:10]
-            gd = g(2).upper()
-            gender = "F" if gd.startswith("F") or "أنثى" in gd or gd == "F" else "M"
-            phone = g(3)
-            gname = g(4)
-            gphone = g(5)
-            grp_name = g(6)
-            notes = g(7)
+            birth = g("birth")[:10]
+            age = g("age").split(".")[0]
+            if not birth and age.isdigit():
+                birth = f"{date.today().year - int(age)}-01-01"
+            gd = g("gender").upper()
+            gender = "F" if gd.startswith("F") or "أنثى" in gd or "بنت" in gd else "M"
+            grp_name = g("group")
             group_id = groups.get(grp_name) or groups.get(grp_name.lower()) or suggest_group_fn(con, birth, gender)
             if con.execute("SELECT id FROM players WHERE full_name=?", (name,)).fetchone():
                 skipped += 1
@@ -246,11 +294,12 @@ def import_players(con, file_storage, suggest_group_fn, filename=None):
             last = parts[-1] if len(parts) > 1 else ""
             middle = " ".join(parts[1:-1])
             con.execute(
-                "INSERT INTO players (full_name,first_name,middle_name,last_name,birth_date,gender,phone,"
-                "guardian_name,guardian_phone,group_id,join_date,notes,status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'active')",
-                (name, first, middle, last, birth, gender, phone, gname, gphone, group_id,
-                 date.today().isoformat(), notes),
+                "INSERT INTO players (full_name,first_name,middle_name,last_name,birth_date,gender,school,phone,"
+                "guardian_name,guardian_phone,parent2_name,parent2_phone,group_id,join_date,notes,status) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')",
+                (name, first, middle, last, birth, gender, g("school"), _phone(g("phone")),
+                 g("guardian_name"), _phone(g("guardian_phone")), g("parent2_name"), _phone(g("parent2_phone")),
+                 group_id, date.today().isoformat(), g("notes")),
             )
             imported += 1
         except Exception as e:

@@ -102,7 +102,7 @@ T = {
     "import_title": "Import players from Excel",
     "import_hint_pre": "Download the", "import_hint_link": "players template",
     "import_hint_post": ", fill it in, and upload it here.",
-    "import_btn": "Import", "import_formats": "Accepts Excel (.xlsx), CSV, TSV, or a plain .txt list of names.",
+    "import_btn": "Import", "import_formats": "Columns: full name, birth date (or age), gender, school, player phone, father name + phone, mother name + phone, group, notes. Any order, English or Arabic headers. Excel, CSV, TSV or a .txt list of names.",
     # player form
     "edit_player": "Edit player", "new_player_title": "New player",
     "full_name": "Full name *", "birth_date": "Birth date", "gender": "Gender",
@@ -278,7 +278,7 @@ T = {
     "import_title": "استيراد لاعبين من Excel",
     "import_hint_pre": "نزّل", "import_hint_link": "قالب اللاعبين",
     "import_hint_post": "، عبّيه، وارفعه هون.",
-    "import_btn": "استيراد", "import_formats": "بيقبل إكسل (.xlsx) أو CSV أو TSV أو ملف أسماء نصي .txt.",
+    "import_btn": "استيراد", "import_formats": "الأعمدة: الاسم الكامل، تاريخ الميلاد (أو العمر)، الجنس، المدرسة، هاتف اللاعب، اسم الأب ورقمه، اسم الأم ورقمها، المجموعة، ملاحظات. بأي ترتيب، عناوين عربي أو إنجليزي. إكسل أو CSV أو TSV أو ملف أسماء .txt.",
     "edit_player": "تعديل لاعب", "new_player_title": "لاعب جديد",
     "full_name": "الاسم الكامل *", "birth_date": "تاريخ الميلاد", "gender": "الجنس",
     "male": "ذكر", "female": "أنثى", "group": "المجموعة",
