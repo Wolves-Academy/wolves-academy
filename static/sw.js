@@ -1,6 +1,6 @@
 // Wolves service worker: makes the app installable and shows a friendly screen
 // when there is no internet. It never caches pages or data, so numbers are always live.
-const CACHE = 'wsa-static-v2';
+const CACHE = 'wsa-static-v3';
 const ASSETS = ['/static/logo-mark.png', '/static/icon-192.png'];
 const OFFLINE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Offline</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#150A27;
@@ -20,11 +20,10 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   const req = e.request;
-  if (req.method !== 'GET') return;
-  // Pages go straight to the network (no respondWith): some iPhones failed page loads routed through
-  // a service worker and got stuck on the offline screen. The offline screen only shows when truly offline.
+  // Online: the service worker stays out of the way entirely. Some iPhones fail any request routed
+  // through it (pages got stuck on the offline screen, app.css never loaded). Only offline do we answer.
+  if (req.method !== 'GET' || self.navigator.onLine !== false) return;
   if (req.mode === 'navigate') {
-    if (self.navigator.onLine !== false) return;
     e.respondWith(fetch(req).catch(() => new Response(OFFLINE, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })));
   } else if (new URL(req.url).pathname.startsWith('/static/')) {
     e.respondWith(caches.match(req).then(r => r || fetch(req)));
