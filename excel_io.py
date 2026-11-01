@@ -3,6 +3,7 @@
 import csv
 import io
 import os
+import re
 from datetime import date, datetime
 
 from openpyxl import Workbook, load_workbook
@@ -184,13 +185,27 @@ def _header_map(row):
 
 
 def _phone(v):
-    """Excel drops the leading 0 of Jordanian mobiles (791234567 -> 0791234567)."""
+    """Jordanian mobiles in any common form -> 07XXXXXXXX: Excel drops the leading 0
+    (791234567), contact exports add the country code (+962 79 123 4567)."""
     v = (v or "").strip()
     if v.endswith(".0"):
         v = v[:-2]
-    if len(v) == 9 and v.startswith("7") and v.isdigit():
-        v = "0" + v
-    return v
+    digits = re.sub(r"\D", "", v)
+    m = re.fullmatch(r"(?:00962|962)?0?(7\d{8})", digits)
+    return "0" + m.group(1) if m else v
+
+
+def _date(v):
+    """YYYY-MM-DD, or DD/MM/YYYY (D/M/YYYY, dashes or dots too) as written in Jordan."""
+    v = (v or "").strip()[:10]
+    m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", v)
+    if m:
+        d, mo, y = (int(x) for x in m.groups())
+        try:
+            return date(y, mo, d).isoformat()
+        except ValueError:
+            return ""
+    return v if re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) else ""
 
 
 def _norm_cell(v):
@@ -278,7 +293,7 @@ def import_players(con, file_storage, suggest_group_fn, filename=None):
         if not name or any(EXAMPLE_MARK in c for c in row):
             continue
         try:
-            birth = g("birth")[:10]
+            birth = _date(g("birth"))
             age = g("age").split(".")[0]
             if not birth and age.isdigit():
                 birth = f"{date.today().year - int(age)}-01-01"

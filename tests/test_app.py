@@ -472,8 +472,44 @@ def gate_import():
     p = con.execute("SELECT * FROM players WHERE full_name='Sami Ali'").fetchone()
     check(p and p["school"] == "Al-Ahliyya School" and p["birth_date"].startswith(str(T.year - 10))
           and p["parent2_phone"] == "0771234567", "Arabic headers in any order, age -> birth year")
+    # a contacts export: DD/MM/YYYY dates and +962 numbers
+    buf = io.BytesIO("Name,Birth date,Phone\nRana Odeh,16/01/2012,+962 79 740 7997\n".encode("utf-8"))
+    excel_io.import_players(con, buf, db.suggest_group, filename="c.csv")
+    p = con.execute("SELECT * FROM players WHERE full_name='Rana Odeh'").fetchone()
+    check(p and p["birth_date"] == "2012-01-16" and p["phone"] == "0797407997", "DD/MM/YYYY and +962 understood")
     con.close()
     return "GATE_IMPORT_OK"
+
+
+def gate_setup():
+    """Quick setup: one row, a bulk group change, a bulk package and a renewal."""
+    a = admin()
+    con = db.get_db()
+    ids = [new_player(con, f"Q Kid {i}", gid=None) for i in range(3)]
+    page = a.get("/players/setup?need=nogroup").get_data(as_text=True)
+    check(all(f"Q Kid {i}" in page for i in range(3)), "players without a group are listed")
+    r = a.post("/api/players/quick", json={"id": ids[0], "set": {"gender": "F", "birth_date": "2014-02-03"}})
+    p = con.execute("SELECT * FROM players WHERE id=?", (ids[0],)).fetchone()
+    check(r.status_code == 200 and p["gender"] == "F" and p["birth_date"] == "2014-02-03", "row saved")
+    a.post("/api/players/quick", json={"ids": ids, "set": {"group_id": "2"}})
+    check(con.execute("SELECT COUNT(*) n FROM players WHERE group_id=2 AND full_name LIKE 'Q Kid%'").fetchone()["n"] == 3,
+          "bulk group")
+    d = a.post("/api/players/quick", json={"ids": ids, "set": {"price": "85", "start_date": iso(-3), "paid": True}}).get_json()
+    check(all(x["active"] and x["price"] == 85 for x in d["players"]), "bulk package created")
+    paid = con.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE player_id IN (%s)" % ",".join("?" * 3), ids).fetchone()["s"]
+    check(paid == 255, "paid ticked -> 3 x 85 recorded")
+    # a placeholder package (price 0) gets its real price later without a second package
+    pid = new_player(con, "Placeholder Kid")
+    db.create_subscription(con, pid, iso(0), price=0, amount=0)
+    check("Placeholder Kid" in a.get("/players/setup?need=noprice").get_data(as_text=True), "price-not-set filter")
+    a.post("/api/players/quick", json={"id": pid, "set": {"price": "85"}})
+    check(con.execute("SELECT COUNT(*) n, MAX(price) p FROM subscriptions WHERE player_id=?", (pid,)).fetchone()["p"] == 85,
+          "price set on the same package")
+    d = a.post("/api/players/quick", json={"id": pid, "set": {"renew": True, "price": "85", "paid": True}}).get_json()
+    subs = con.execute("SELECT * FROM subscriptions WHERE player_id=? ORDER BY start_date", (pid,)).fetchall()
+    check(len(subs) == 2 and subs[1]["start_date"] > subs[0]["start_date"], "renew starts after the current package")
+    con.close()
+    return "GATE_SETUP_OK"
 
 
 def gate_schedule():
@@ -544,7 +580,7 @@ def gate_schedule():
     return "GATE_SCHEDULE_OK"
 
 
-GATES = {"schedule": gate_schedule, "import": gate_import, "settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
+GATES = {"setup": gate_setup, "schedule": gate_schedule, "import": gate_import, "settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
          "trials": gate_trials, "cancel": gate_cancel, "pages": gate_pages, "legacy": gate_legacy}
 
 if __name__ == "__main__":

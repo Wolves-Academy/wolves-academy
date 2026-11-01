@@ -461,6 +461,10 @@ def players_page():
     renewal = request.args.get("renewal") == "1"
     if status == "renewal":                        # the Status dropdown's "Needs renewal"
         status, renewal = "", True
+    pkg = status if status in ("withpkg", "nopkg", "noprice") else ""   # package filters
+    if pkg:
+        status = "active"
+    limit = max(60, min(5000, request.args.get("limit", type=int) or 60))   # long lists load 60 at a time
     school = request.args.get("school")            # None = any, "" = no school set
     if school == "__all":
         school = None
@@ -470,8 +474,9 @@ def players_page():
     sql = f"SELECT p.*, {gcol} AS group_name FROM players p LEFT JOIN groups g ON g.id=p.group_id WHERE 1=1"
     args = []
     if q:
-        sql += " AND (p.full_name LIKE ? OR p.school LIKE ? OR p.guardian_phone LIKE ? OR p.parent2_phone LIKE ?)"
-        args += [f"%{q}%"] * 4
+        sql += (" AND (LOWER(p.full_name) LIKE ? OR LOWER(p.school) LIKE ? OR p.phone LIKE ? "
+                "OR p.guardian_phone LIKE ? OR p.parent2_phone LIKE ?)")
+        args += [f"%{q.lower()}%"] * 5
     if school is not None:
         sql += " AND COALESCE(p.school,'')=?"
         args.append(school.strip())
@@ -489,13 +494,19 @@ def players_page():
     rows = con.execute(sql, args).fetchall()
 
     st = db.get_settings()
-    owed = {r["id"]: r["total"] for r in db.money_owed(con, st)["rows"]}
     players = []
-    for p in rows:
+    whole = renewal or pkg     # these filters need every player's package; otherwise only the shown page
+    for p in (rows if whole else rows[:limit]):
         info = player_sub_info(con, p, st)
         if renewal and not info["needs_renewal"]:
             continue
-        players.append({"p": dict(p), "info": info, "owed": owed.get(p["id"], 0)})
+        if (pkg == "withpkg" and not info["active"]) or (pkg == "nopkg" and info["active"]):
+            continue
+        if pkg == "noprice" and not (info["active"] and not (info["sub"] or {}).get("price")):
+            continue
+        players.append({"p": dict(p), "info": info})
+    total = len(players) if whole else len(rows)
+    players = players[:limit]
     groups = con.execute("SELECT * FROM groups").fetchall()
     # counts for the group tabs / status filter (unfiltered, so tabs stay stable)
     group_counts = {r["group_id"]: r["c"] for r in con.execute(
@@ -506,10 +517,124 @@ def players_page():
     schools = con.execute("SELECT COALESCE(school,'') s, COUNT(*) c FROM players WHERE status IN ('active','frozen','pending') "
                           "GROUP BY COALESCE(school,'') ORDER BY c DESC, s").fetchall()
     con.close()
-    return render_template("players.html", players=players, groups=groups,
+    return render_template("players.html", players=players, groups=groups, total=total, limit=limit,
                            group_counts=group_counts, status_counts=status_counts, schools=schools,
-                           q=q, f_group=group_id, f_gender=gender, f_status=status, f_renewal=renewal,
+                           q=q, f_group=group_id, f_gender=gender, f_status=pkg or status, f_renewal=renewal,
                            f_school=school, f_sort=sort)
+
+
+# ---- quick setup: fix groups / gender / packages for many players fast ----
+
+@app.route("/players/setup")
+@require_role("admin")
+def players_setup():
+    """One screen to sort out hundreds of players: group, gender, birth date and the
+    package (price, start, paid), row by row or for a whole selection at once."""
+    con = db.get_db()
+    st = db.get_settings()
+    q = (request.args.get("q") or "").strip().lower()
+    need = request.args.get("need") or ""
+    group_id = request.args.get("group") or ""
+    limit = max(40, min(2000, request.args.get("limit", type=int) or 40))
+    sql = "SELECT * FROM players WHERE status IN ('active','frozen','pending')"
+    args = []
+    if q:
+        sql += " AND (LOWER(full_name) LIKE ? OR phone LIKE ? OR guardian_phone LIKE ?)"
+        args += [f"%{q}%"] * 3
+    if group_id == "none" or need == "nogroup":
+        sql += " AND group_id IS NULL"
+    elif group_id:
+        sql += " AND group_id=?"
+        args.append(group_id)
+    if need == "nobirth":
+        sql += " AND COALESCE(birth_date,'')=''"
+    rows = con.execute(sql + " ORDER BY full_name", args).fetchall()
+    out = []
+    whole = need in ("noprice", "nopkg", "renewal")
+    for p in (rows if whole else rows[:limit]):
+        info = player_sub_info(con, p, st)
+        sub = info["sub"] if info["active"] else None
+        if need == "noprice" and not (sub and not sub.get("price")):
+            continue
+        if need == "nopkg" and sub:
+            continue
+        if need == "renewal" and not info["needs_renewal"]:
+            continue
+        out.append({"p": p, "info": info, "sub": sub})
+    total = len(out) if whole else len(rows)
+    groups = con.execute("SELECT * FROM groups ORDER BY id").fetchall()
+    counts = {
+        "nogroup": con.execute("SELECT COUNT(*) n FROM players WHERE group_id IS NULL "
+                               "AND status IN ('active','frozen','pending')").fetchone()["n"],
+        "noprice": con.execute("SELECT COUNT(*) n FROM subscriptions WHERE status='active' AND COALESCE(price,0)=0")
+        .fetchone()["n"],
+    }
+    con.close()
+    return render_template("players_setup.html", rows=out[:limit], total=total, limit=limit, groups=groups,
+                           q=request.args.get("q") or "", need=need, f_group=group_id, counts=counts,
+                           settings=st, today=date.today().isoformat())
+
+
+def _quick_apply(con, pid, d, st):
+    """Apply one quick-setup change set to a player. Keys present in d are changed:
+    group_id, gender, birth_date, price, start_date, sessions, paid (bool), renew (bool)."""
+    p = con.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+    if not p:
+        return None
+    if "group_id" in d:
+        con.execute("UPDATE players SET group_id=? WHERE id=?", (int(d["group_id"]) if str(d["group_id"]).isdigit() else None, pid))
+    if d.get("gender") in ("M", "F"):
+        con.execute("UPDATE players SET gender=? WHERE id=?", (d["gender"], pid))
+    if "birth_date" in d:
+        con.execute("UPDATE players SET birth_date=? WHERE id=?", (_iso(d["birth_date"]) or "", pid))
+    con.commit()
+    price = d.get("price")
+    price = float(price) if price not in (None, "") else None
+    start = _iso(d.get("start_date"))
+    sessions = int(d["sessions"]) if str(d.get("sessions") or "").isdigit() else None
+    info = player_sub_info(con, p, st)
+    sub = info["sub"] if info["active"] else None
+    if d.get("renew"):   # next package, starting the day after the current one ends
+        if not start:
+            start = date.today().isoformat()
+            if sub and sub.get("expiry_date") and sub["expiry_date"] >= start:
+                start = (date.fromisoformat(sub["expiry_date"]) + timedelta(days=1)).isoformat()
+        db.create_subscription(con, pid, start, price=price, sessions_total=sessions,
+                               amount=None if d.get("paid") else 0)
+    elif price is not None or start or sessions:
+        if sub:
+            db.update_subscription(con, sub["id"], start_date=start, price=price, sessions_total=sessions)
+            if d.get("paid"):   # settle what's still open on this package
+                paid = con.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE subscription_id=?",
+                                   (sub["id"],)).fetchone()["s"]
+                rest = (price if price is not None else (sub.get("price") or 0)) - paid
+                if rest > 0:
+                    db.add_payment(con, pid, rest, sub_id=sub["id"])
+            db.refresh_unpaid(con, pid, st)
+        else:
+            db.create_subscription(con, pid, start or date.today().isoformat(), price=price, sessions_total=sessions,
+                                   amount=None if d.get("paid") else 0)
+    p = con.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+    info = player_sub_info(con, p, st)
+    s = info["sub"] if info["active"] else None
+    return {"id": pid, "group_id": p["group_id"], "gender": p["gender"], "birth_date": p["birth_date"],
+            "price": (s or {}).get("price"), "start": (s or {}).get("start_date"), "left": info["left"],
+            "expiry": (s or {}).get("expiry_date"), "active": info["active"]}
+
+
+@app.route("/api/players/quick", methods=["POST"])
+@require_role("admin")
+def api_players_quick():
+    """Save one row of Quick setup, or the same change for many players (ids)."""
+    data = request.get_json(force=True)
+    ids = [int(i) for i in (data.get("ids") or [data.get("id")]) if str(i).isdigit()][:2000]
+    change = {k: v for k, v in (data.get("set") or {}).items()
+              if k in ("group_id", "gender", "birth_date", "price", "start_date", "sessions", "paid", "renew")}
+    con = db.get_db()
+    st = db.get_settings()
+    out = [r for r in (_quick_apply(con, pid, change, st) for pid in ids) if r]
+    con.close()
+    return jsonify({"ok": True, "players": out})
 
 
 @app.route("/players/new", methods=["GET", "POST"])
@@ -2179,6 +2304,12 @@ def _startup_error(e):
 # idempotent, also covers WSGI hosting where __main__ never runs
 try:
     db.init_db()
+    # moving databases: MIGRATE_FROM_URL = the old database; its data is copied in once,
+    # while the new one is still empty. A failed copy blocks the app instead of running empty.
+    if os.environ.get("MIGRATE_FROM_URL"):
+        copied = db.copy_from(os.environ["MIGRATE_FROM_URL"])
+        if copied:
+            print("[migrate] copied:", copied)
 except Exception as e:  # noqa: BLE001 - surfaced on every page until fixed
     _startup_error(e)
 

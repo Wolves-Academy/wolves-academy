@@ -315,6 +315,51 @@ def get_db():
     return con
 
 
+COPY_TABLES = ["groups", "players", "subscriptions", "payments", "attendance", "settings", "coaches",
+               "coach_attendance", "checkin_tokens", "coach_logins", "expenses", "salary_payouts", "events",
+               "player_freezes"]
+
+
+def copy_from(src_url):
+    """Moving to a new database (e.g. Tokyo -> Frankfurt): copy every table from src_url into
+    this database, once, while this one has no players yet. Ids are kept, sequences moved on.
+    Returns rows copied per table, or None when there was nothing to do."""
+    import psycopg
+    dst_url = _pg_url()
+    if not dst_url or not src_url or src_url.strip() == dst_url:
+        return None
+    with psycopg.connect(dst_url, autocommit=True, prepare_threshold=None) as dst, \
+            psycopg.connect(src_url.strip(), autocommit=True, prepare_threshold=None) as src:
+        if not src.execute("SELECT COUNT(*) FROM players").fetchone()[0]:
+            return None
+        done = {}
+        with dst.transaction():
+            # transaction-scoped lock: safe on Supabase's transaction pooler; a second cold
+            # start at the same moment skips, and a copied database is never copied again
+            if not dst.execute("SELECT pg_try_advisory_xact_lock(424242)").fetchone()[0] \
+                    or dst.execute("SELECT COUNT(*) FROM players").fetchone()[0]:
+                return None
+            dst.execute("TRUNCATE " + ", ".join(COPY_TABLES) + " RESTART IDENTITY CASCADE")
+            for t in COPY_TABLES:
+                dcols = {r[0] for r in dst.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s",
+                    (t,)).fetchall()}
+                cur = src.execute(f"SELECT * FROM {t}")
+                idx = [i for i, c in enumerate(cur.description) if c.name in dcols]
+                cols = [cur.description[i].name for i in idx]
+                rows = [tuple(r[i] for i in idx) for r in cur.fetchall()]
+                if rows:
+                    with dst.cursor() as w:
+                        w.executemany(f"INSERT INTO {t} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})",
+                                      rows)
+                if "id" in dcols:
+                    dst.execute(f"SELECT setval(pg_get_serial_sequence('{t}', 'id'), "
+                                f"GREATEST((SELECT COALESCE(MAX(id), 0) FROM {t}), 1))")
+                done[t] = len(rows)
+    _SETTINGS["data"] = None
+    return done
+
+
 def _columns(con, table):
     if is_postgres():
         return {r["column_name"] for r in con.execute(
@@ -422,6 +467,11 @@ def _migrate(con):
             con.execute("ALTER TABLE expenses ADD COLUMN unit_price REAL")
     except Exception:
         pass
+    if is_postgres():
+        # Supabase also serves every public table over its web API; with row level security on
+        # and no policies that API sees nothing, while this app (the table owner) is unaffected
+        for t in COPY_TABLES:
+            con.execute(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY")
     # players frozen before freeze periods existed get an open freeze row
     for p in con.execute("SELECT id, frozen_at FROM players WHERE status='frozen' AND frozen_at IS NOT NULL").fetchall():
         has = con.execute("SELECT 1 FROM player_freezes WHERE player_id=? AND end_date IS NULL",
@@ -499,12 +549,17 @@ def parse_days_text(days_text, time_text=""):
 
 def group_slots(g):
     """[{'day', 'time'}] of a group row in week order; empty = follows the academy's training days."""
+    return list(_parse_slots((g["slots"] if "slots" in g.keys() else "") or ""))
+
+
+@lru_cache(maxsize=256)
+def _parse_slots(raw):
     try:
-        raw = json.loads((g["slots"] if "slots" in g.keys() else "") or "[]")
+        data = json.loads(raw or "[]")
     except (ValueError, TypeError):
-        return []
-    out = [s for s in raw if isinstance(s, dict) and s.get("day") in _WD]
-    return sorted(out, key=lambda s: WEEK_ORDER.index(s["day"]))
+        return ()
+    out = [s for s in data if isinstance(s, dict) and s.get("day") in _WD]
+    return tuple(sorted(out, key=lambda s: WEEK_ORDER.index(s["day"])))
 
 
 def slots_label(slots, lang="en"):
@@ -823,6 +878,18 @@ def sub_progress(con, sub, settings=None):
     freeze periods. A session is consumed when its date passes, attended or not.
     Returns {total, used, left, expiry, days_left, active, dates}.
     """
+    # pages ask about the same package several times (list, owed, projection): once per page view
+    rc = getattr(_RC, "data", None)
+    key = ("prog", sub["id"], sub["start_date"], sub["sessions_total"], sub["player_id"])
+    if rc is not None and key in rc:
+        return rc[key]
+    out = _sub_progress(con, sub, settings)
+    if rc is not None:
+        rc[key] = out
+    return out
+
+
+def _sub_progress(con, sub, settings=None):
     settings = settings or get_settings()
     total = int(sub["sessions_total"] or 0)
     # legacy: freezes before player_freezes existed shifted the calendar by N days

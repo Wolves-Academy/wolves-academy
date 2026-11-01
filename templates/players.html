@@ -17,6 +17,7 @@
         {% if p.status=='frozen' %}<span class="tag tag-acc">{{ t('st_frozen') }}</span>{% endif %}
         {% if p.status=='left' %}<span class="tag tag-mute">{{ t('st_left') }}</span>{% endif %}
         {% if not p.trial_used and not info.sub %}<span class="tag tag-ok">{{ t('trial_tag') }}</span>{% endif %}
+        {% if info.active and not info.sub.price %}<span class="tag tag-warn">{{ t('w_price_not_set') }}</span>{% endif %}
       </div>
       <div class="sub truncate mt-0.5">{{ p.school or '' }}{% if p.school %} · {% endif %}{{ gname.get(p.group_id) or p.group_name or '-' }}</div>
       <div class="mt-1.5 flex items-center gap-2.5 flex-wrap">
@@ -50,9 +51,10 @@
   <div class="flex items-end gap-3 flex-wrap">
     <div>
       <h1 class="h-page">{{ t('players_title') }}</h1>
-      <div class="sub mt-1 num">{{ t('p_showing', n=players|length) }}</div>
+      <div class="sub mt-1 num">{{ t('p_showing', n=total) }}</div>
     </div>
-    <div class="ms-auto flex gap-2">
+    <div class="ms-auto flex gap-2 flex-wrap justify-end">
+      <a href="/players/setup" class="btn btn-line btn-sm">{{ icon('edit','w-4 h-4') }}{{ t('w_quick_setup') }}</a>
       <a href="/groups" class="btn btn-line btn-sm">{{ icon('grid','w-4 h-4') }}{{ t('nav_groups') }}</a>
       <a href="/players/new" class="btn btn-ink btn-sm">{{ icon('plus','w-4 h-4') }}{{ t('new_player') }}</a>
     </div>
@@ -77,7 +79,10 @@
         </select>
         <select name="status" class="inp inp-sm" onchange="this.form.submit()" aria-label="{{ t('all_statuses') }}">
           <option value="">{{ t('all_statuses') }} ({{ st_all }})</option>
+          <option value="withpkg" {% if f_status == 'withpkg' %}selected{% endif %}>{{ t('w_f_withpkg') }}</option>
           <option value="renewal" {% if f_renewal %}selected{% endif %}>{{ t('needs_renewal') }}</option>
+          <option value="noprice" {% if f_status == 'noprice' %}selected{% endif %}>{{ t('w_f_noprice') }}</option>
+          <option value="nopkg" {% if f_status == 'nopkg' %}selected{% endif %}>{{ t('w_f_nopkg') }}</option>
           {% for k, label in [('active', t('st_active')), ('frozen', t('st_frozen')), ('pending', t('pending_badge')), ('left', t('st_left'))] %}
           <option value="{{ k }}" {% if f_status == k %}selected{% endif %}>{{ label }} ({{ status_counts.get(k, 0) }})</option>{% endfor %}
         </select>
@@ -107,6 +112,10 @@
         {% endfor %}
       {% else %}
         {% for item in players %}{{ prow(item, gname) }}{% endfor %}
+      {% endif %}
+      {% if total > players|length %}
+      <a href="{{ qs() }}{{ '&' if qs()|trim != '?' else '' }}limit={{ limit + 60 }}" class="row justify-center font-bold text-accent">
+        {{ t('w_show_more', n=total - players|length) }}</a>
       {% endif %}
       {% if not players %}
       <div class="empty">{{ t('no_results') }}

@@ -8,7 +8,7 @@ for (const p of ['playwright-core', '@playwright/cli/node_modules/playwright-cor
   try { pw = require(path.join(gRoot, p)); break; } catch (e) {}
 }
 const B = 'http://127.0.0.1:8766';
-const PAGES = ['/dashboard', '/attendance', '/players', '/players/1', '/players/new', '/payments', '/finance', '/coaches',
+const PAGES = ['/dashboard', '/attendance', '/players', '/players/setup', '/groups', '/players/1', '/players/new', '/payments', '/finance', '/coaches',
   '/coaches/1', '/coaches/checkin', '/groups', '/analytics', '/events', '/settings', '/reports/weekly', '/reports/month',
   '/reports/trials'];
 (async () => {

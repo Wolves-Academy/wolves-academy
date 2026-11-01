@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ t('w_quick_setup') }}{% endblock %}
+{% block head %}
+<style>
+  .qrow { padding:12px 16px; border-bottom:1px solid rgb(var(--rule-soft)); display:grid; gap:8px; }
+  .qrow.dirty { background:rgb(var(--acc) / .06); }
+  .qrow.saved { background:rgb(var(--ok) / .08); }
+  .qgrid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; }
+  @media (min-width:900px) { .qgrid { grid-template-columns:1.3fr .7fr 1fr .8fr 1fr auto; align-items:center; } }
+  .qgrid .inp { height:40px; }
+  #bulkBar { position:sticky; bottom:calc(64px + env(safe-area-inset-bottom)); z-index:30; }
+  @media (min-width:1024px) { #bulkBar { bottom:12px; } }
+</style>
+{% endblock %}
+{% block content %}
+{% set qbase = '?' ~ ('q=' ~ q|urlencode ~ '&' if q else '') ~ ('group=' ~ f_group ~ '&' if f_group else '') %}
+<div class="stack">
+  <div class="flex items-end gap-3 flex-wrap">
+    <div class="min-w-0">
+      <a href="/players" class="sub hover:text-ink">{{ t('nav_players') }}</a>
+      <h1 class="h-page mt-1">{{ t('w_quick_setup') }}</h1>
+      <div class="sub mt-1">{{ t('w_qs_sub') }}</div>
+    </div>
+    <button id="saveAll" class="btn btn-ink btn-sm ms-auto hidden" onclick="saveAll()">{{ icon('check','w-4 h-4') }}<span></span></button>
+  </div>
+
+  <section class="sheet">
+    <form method="get" class="sheet-bd grid gap-2">
+      <input type="hidden" name="need" value="{{ need }}">
+      <div class="grid grid-cols-[1fr_auto] gap-2">
+        <input name="q" value="{{ q }}" type="search" class="inp" placeholder="{{ t('wp_search_ph') }}" aria-label="{{ t('wp_search_ph') }}">
+        <select name="group" class="inp w-auto" onchange="this.form.submit()" aria-label="{{ t('group') }}">
+          <option value="">{{ t('all_groups') }}</option>
+          <option value="none" {% if f_group == 'none' %}selected{% endif %}>{{ t('no_group') }}</option>
+          {% for g in groups %}<option value="{{ g.id }}" {% if f_group == g.id|string %}selected{% endif %}>{{ g.name_ar if lang == 'ar' and g.name_ar else g.name_en }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="chips">
+        {% for k, label in [('', t('all_word')), ('nogroup', t('w_need_group') ~ ' · ' ~ counts.nogroup), ('noprice', t('w_f_noprice') ~ ' · ' ~ counts.noprice), ('renewal', t('needs_renewal')), ('nopkg', t('w_f_nopkg')), ('nobirth', t('w_need_birth'))] %}
+        <a href="{{ qbase }}need={{ k }}" class="da-tab {{ 'on' if need == k }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </form>
+    <div class="sheet-ft flex-wrap">
+      <label class="check !py-0"><input type="checkbox" id="selAll" onchange="selectAll(this.checked)"> {{ t('w_select_all_shown') }}</label>
+      <span class="sub num ms-auto">{{ t('w_showing_of', n=rows|length, t=total) }}</span>
+    </div>
+
+    <div id="rows">
+      {% for r in rows %}{% set p = r.p %}{% set s = r.sub %}
+      <div class="qrow" data-id="{{ p.id }}">
+        <div class="flex items-center gap-3 min-w-0">
+          <input type="checkbox" class="sel w-5 h-5 shrink-0" aria-label="{{ t('select') }} {{ p.full_name }}">
+          <a href="/players/{{ p.id }}" class="font-bold truncate flex-1 min-w-0">{{ p.full_name }}</a>
+          <span class="sub num shrink-0" dir="ltr">{{ p.phone or p.guardian_phone or '' }}</span>
+        </div>
+        <div class="qgrid">
+          <label class="grid gap-0.5"><span class="label !text-[10px]">{{ t('group') }}</span>
+          <select data-k="group_id" class="inp inp-sm">
+            <option value="">{{ t('no_group') }}</option>
+            {% for g in groups %}<option value="{{ g.id }}" {% if p.group_id == g.id %}selected{% endif %}>{{ g.name_ar if lang == 'ar' and g.name_ar else g.name_en }}</option>{% endfor %}
+          </select></label>
+          <label class="grid gap-0.5"><span class="label !text-[10px]">{{ t('gender') }}</span>
+          <select data-k="gender" class="inp inp-sm">
+            <option value="M" {% if p.gender != 'F' %}selected{% endif %}>{{ t('male') }}</option>
+            <option value="F" {% if p.gender == 'F' %}selected{% endif %}>{{ t('female') }}</option>
+          </select></label>
+          <label class="grid gap-0.5"><span class="label !text-[10px]">{{ t('birth_date') }}</span>
+            <input data-k="birth_date" type="date" value="{{ p.birth_date or '' }}" class="inp inp-sm num"></label>
+          <label class="grid gap-0.5"><span class="label !text-[10px]">{{ t('p_price') }}</span>
+            <input data-k="price" type="number" step="0.5" min="0" value="{{ '%g'|format(s.price) if s and s.price else '' }}"
+                   class="inp inp-sm num {{ '!border-warn' if s and not s.price }}"></label>
+          <label class="grid gap-0.5"><span class="label !text-[10px]">{{ t('p_start_date') }}</span>
+            <input data-k="start_date" type="date" value="{{ s.start_date if s else '' }}" class="inp inp-sm num"></label>
+          <label class="check !py-0 !min-h-0 h-10 self-end"><input data-k="paid" type="checkbox"> {{ t('w_paid') }}</label>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="sub num st flex-1 min-w-0">
+            {% if s %}{{ t('w_qs_left', n=r.info.left, d=(s.expiry_date or '')[8:10] ~ '/' ~ (s.expiry_date or '')[5:7]) }}{% if not s.price %} · <span class="text-warn font-semibold">{{ t('w_price_not_set') }}</span>{% endif %}
+            {% else %}<span class="text-bad">{{ t('no_active_sub') }}</span>{% endif %}</span>
+          <button type="button" class="btn btn-line btn-xs" onclick="renewRow(this)">{{ icon('plus','w-3.5 h-3.5') }}{{ t('w_renew_12') }}</button>
+          <button type="button" class="btn btn-ink btn-xs save hidden" onclick="saveRow(this.closest('.qrow'))">{{ t('save') }}</button>
+        </div>
+      </div>
+      {% else %}<div class="empty">{{ t('no_results') }}</div>{% endfor %}
+    </div>
+    {% if total > rows|length %}
+    <a href="{{ qbase }}need={{ need }}&limit={{ limit + 40 }}" class="row justify-center font-bold text-accent">{{ t('w_show_more', n=total - rows|length) }}</a>
+    {% endif %}
+  </section>
+
+  <!-- the same change for every ticked player -->
+  <section id="bulkBar" class="sheet hidden shadow-lg">
+    <div class="sheet-bd !py-3 grid gap-2">
+      <div class="font-bold num" id="bulkN"></div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <select id="bGroup" class="inp inp-sm" aria-label="{{ t('group') }}">
+          <option value="">{{ t('w_set_group') }}</option>
+          {% for g in groups %}<option value="{{ g.id }}">{{ g.name_ar if lang == 'ar' and g.name_ar else g.name_en }}</option>{% endfor %}
+        </select>
+        <input id="bPrice" type="number" step="0.5" min="0" class="inp inp-sm num" placeholder="{{ t('p_price') }}"
+               value="{{ settings.bundles[0].price if settings.bundles else settings.monthly_price }}">
+        <input id="bStart" type="date" class="inp inp-sm num" aria-label="{{ t('p_start_date') }}">
+        <label class="check !py-0 !min-h-0 h-10"><input id="bPaid" type="checkbox"> {{ t('w_paid') }}</label>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button class="btn btn-line btn-sm" onclick="bulk('group')">{{ t('w_apply_group') }}</button>
+        <button class="btn btn-line btn-sm" onclick="bulk('package')">{{ t('w_apply_package') }}</button>
+        <button class="btn btn-ink btn-sm" onclick="bulk('renew')">{{ icon('plus','w-4 h-4') }}{{ t('w_renew_12') }}</button>
+        <span id="bulkMsg" class="sub self-center"></span>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const QT = { saved: {{ t('w_saved')|tojson }}, err: {{ t('save_error')|tojson }}, nSel: {{ t('w_n_selected')|tojson }},
+             saveN: {{ t('w_save_n')|tojson }}, working: {{ t('w_working')|tojson }}, done: {{ t('w_done_n')|tojson }},
+             left: {{ t('w_qs_left')|tojson }}, sure: {{ t('w_bulk_sure')|tojson }} };
+const BUNDLE_SESSIONS = {{ (settings.bundles[0].sessions if settings.bundles else settings.sessions_per_month)|tojson }};
+const rowsEl = document.getElementById('rows');
+
+// a row turns "dirty" when something in it changes; Save sends only what changed
+rowsEl.addEventListener('input', e => {
+  const k = e.target.dataset.k, row = e.target.closest('.qrow');
+  if (!k || !row) return;
+  row.classList.add('dirty'); row.classList.remove('saved');
+  row.querySelector('.save').classList.remove('hidden');
+  (row._ch = row._ch || new Set()).add(k);
+  countDirty();
+});
+rowsEl.addEventListener('change', e => { if (e.target.classList.contains('sel')) countSel(); });
+
+function changesOf(row){
+  const set = {};
+  (row._ch || new Set()).forEach(k => { const el = row.querySelector(`[data-k="${k}"]`);
+    set[k] = el.type === 'checkbox' ? el.checked : el.value; });
+  return set;
+}
+async function post(body){
+  const r = await fetch('/api/players/quick', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+function paint(row, p){
+  row.classList.remove('dirty'); row.classList.add('saved'); row._ch = new Set();
+  row.querySelector('.save').classList.add('hidden');
+  if (p) {
+    row.querySelector('[data-k="price"]').value = p.price || '';
+    row.querySelector('[data-k="price"]').classList.toggle('!border-warn', p.active && !p.price);
+    row.querySelector('[data-k="start_date"]').value = p.start || '';
+    row.querySelector('[data-k="paid"]').checked = false;
+    row.querySelector('[data-k="group_id"]').value = p.group_id || '';
+    row.querySelector('.st').textContent = p.active ? QT.left.replace('{n}', p.left).replace('{d}', (p.expiry||'').slice(8,10) + '/' + (p.expiry||'').slice(5,7)) : '';
+  }
+}
+async function saveRow(row){
+  try { const d = await post({id: +row.dataset.id, set: changesOf(row)}); paint(row, d.players[0]); }
+  catch (e) { toast(QT.err); }
+  countDirty();
+}
+async function renewRow(btn){
+  const row = btn.closest('.qrow');
+  const set = Object.assign(changesOf(row), {renew: true, sessions: BUNDLE_SESSIONS});
+  if (!set.price) set.price = document.getElementById('bPrice').value;
+  btn.disabled = true;
+  try { const d = await post({id: +row.dataset.id, set}); paint(row, d.players[0]); toast(QT.saved); }
+  catch (e) { toast(QT.err); }
+  btn.disabled = false;
+}
+async function saveAll(){
+  for (const row of [...rowsEl.querySelectorAll('.qrow.dirty')]) await saveRow(row);
+}
+function countDirty(){
+  const n = rowsEl.querySelectorAll('.qrow.dirty').length, b = document.getElementById('saveAll');
+  b.classList.toggle('hidden', !n); b.querySelector('span').textContent = QT.saveN.replace('{n}', n);
+}
+
+// bulk: tick players, then set a group / a package / renew for all of them
+function selected(){ return [...rowsEl.querySelectorAll('.sel:checked')].map(c => c.closest('.qrow')); }
+function selectAll(on){ rowsEl.querySelectorAll('.sel').forEach(c => c.checked = on); countSel(); }
+function countSel(){
+  const n = selected().length;
+  document.getElementById('bulkBar').classList.toggle('hidden', !n);
+  document.getElementById('bulkN').textContent = QT.nSel.replace('{n}', n);
+}
+async function bulk(kind){
+  const rows = selected(); if (!rows.length) return;
+  const set = {};
+  if (kind === 'group') { const g = document.getElementById('bGroup').value; if (!g) { document.getElementById('bGroup').focus(); return; } set.group_id = g; }
+  else {
+    set.price = document.getElementById('bPrice').value; set.paid = document.getElementById('bPaid').checked;
+    if (document.getElementById('bStart').value) set.start_date = document.getElementById('bStart').value;
+    if (kind === 'renew') { set.renew = true; set.sessions = BUNDLE_SESSIONS; }
+    if (!confirm(QT.sure.replace('{n}', rows.length))) return;
+  }
+  const msg = document.getElementById('bulkMsg');
+  // small batches keep every request short on the server
+  for (let i = 0; i < rows.length; i += 25) {
+    msg.textContent = QT.working + ' ' + Math.min(i + 25, rows.length) + '/' + rows.length;
+    const part = rows.slice(i, i + 25);
+    try {
+      const d = await post({ids: part.map(r => +r.dataset.id), set});
+      d.players.forEach(p => { const row = rowsEl.querySelector(`.qrow[data-id="${p.id}"]`); if (row) paint(row, p); });
+    } catch (e) { toast(QT.err); msg.textContent = ''; return; }
+  }
+  msg.textContent = QT.done.replace('{n}', rows.length);
+}
+</script>
+{% endblock %}

@@ -87,3 +87,31 @@ AR.update({
     "w_add_day": "ضيف يوم (نسي يسجّل)", "w_via_marks": "سجّل الحضور",
     "w_remove_day_q": "بدك تشيل هاليوم من المدرب؟",
 })
+
+# quick setup (hundreds of players) and package filters
+EN.update({
+    "w_quick_setup": "Quick setup", "all_word": "All", "select": "Select",
+    "w_qs_sub": "Fix many players fast: group, gender, birth date and package. Change a row and tap Save, or tick players and set them all at once.",
+    "w_need_group": "No group", "w_need_birth": "No birth date",
+    "w_f_withpkg": "Active (has a package)", "w_f_noprice": "Price not set", "w_f_nopkg": "No package",
+    "w_price_not_set": "Price not set", "w_paid": "Paid",
+    "w_select_all_shown": "Select all shown", "w_showing_of": "{n} of {t}",
+    "w_qs_left": "{n} left · ends {d}", "w_renew_12": "Renew",
+    "w_set_group": "Group…", "w_apply_group": "Set group", "w_apply_package": "Set package",
+    "w_saved": "Saved", "w_n_selected": "{n} selected", "w_save_n": "Save {n} changes",
+    "w_working": "Saving", "w_done_n": "Done: {n} players", "w_bulk_sure": "Apply this package to {n} players?",
+    "w_show_more": "Show more ({n})",
+})
+AR.update({
+    "w_quick_setup": "ترتيب سريع", "all_word": "الكل", "select": "اختيار",
+    "w_qs_sub": "رتّب لاعبين كثير بسرعة: المجموعة، الجنس، تاريخ الميلاد والاشتراك. غيّر بالسطر واكبس حفظ، أو علّم كذا لاعب وغيّرهم مرة وحدة.",
+    "w_need_group": "بدون مجموعة", "w_need_birth": "بدون تاريخ ميلاد",
+    "w_f_withpkg": "فعّال (عنده اشتراك)", "w_f_noprice": "السعر مش محدد", "w_f_nopkg": "بدون اشتراك",
+    "w_price_not_set": "السعر مش محدد", "w_paid": "مدفوع",
+    "w_select_all_shown": "اختار كل اللي ظاهرين", "w_showing_of": "{n} من {t}",
+    "w_qs_left": "ضل {n} · بيخلص {d}", "w_renew_12": "تجديد",
+    "w_set_group": "المجموعة…", "w_apply_group": "حط بالمجموعة", "w_apply_package": "حط الاشتراك",
+    "w_saved": "انحفظ", "w_n_selected": "{n} مختارين", "w_save_n": "احفظ {n} تغييرات",
+    "w_working": "عم يحفظ", "w_done_n": "خلص: {n} لاعب", "w_bulk_sure": "بدك تحط هالاشتراك لـ {n} لاعب؟",
+    "w_show_more": "اعرض أكثر ({n})",
+})
