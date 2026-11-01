@@ -69,7 +69,7 @@
       <button type="button" class="da-tab !h-auto !py-2 flex-col !items-start !gap-0.5" role="tab" data-gid="{{ g.id }}" data-wa="{{ g.wa_link or '' }}"
               data-name="{{ (g.name_ar ~ ' ' ~ g.name_en)|lower }}" onclick="selectGroup({{ g.id }}, this)">
         <span class="whitespace-nowrap text-[13.5px]">{{ g.name_ar if lang == 'ar' else g.name_en }}</span>
-        {% if g.time_slot %}<span class="num text-[11px] font-semibold opacity-70 whitespace-nowrap">{{ g.time_slot }}</span>{% endif %}
+        {% if glabel[g.id] %}<span class="num text-[11px] font-semibold opacity-70 whitespace-nowrap">{{ glabel[g.id] }}</span>{% endif %}
       </button>
       {% endfor %}
     </div>
@@ -103,7 +103,7 @@
     <!-- coaches on court for this date (admin view) -->
     <div id="coachStrip" class="hidden ledger-rule px-4 py-3">
       <div class="flex items-center gap-x-3 gap-y-2 flex-wrap">
-        <span class="label shrink-0">{{ t('c_coaches_on_court') }}</span>
+        <a href="/coaches/checkin" class="label shrink-0 underline decoration-dotted">{{ t('c_coaches_on_court') }}</a>
         <div id="coachList" class="flex flex-wrap gap-1.5 flex-1"></div>
       </div>
     </div>
@@ -157,16 +157,26 @@
 <!-- add-player sheet -->
 <div id="addModal" class="ovl" role="dialog" aria-modal="true" aria-labelledby="addTitle">
   <div class="panel">
-    <div class="panel-hd"><h3 id="addTitle">{{ t('add_player_title') }}</h3>
+    <div class="panel-hd"><h3 id="addTitle">{{ t('add_player') }}</h3>
       <button onclick="closeSheet('addModal')" class="btn btn-line btn-sm btn-icon ms-auto" aria-label="{{ t('close') }}">{{ icon('x','w-4 h-4') }}</button></div>
     <div class="panel-bd space-y-3">
-      <p class="sub">{{ t('add_player_hint') }}</p>
-      <label class="field"><span class="label">{{ t('player_name') }}</span>
-        <input id="npName" type="text" autocomplete="off" class="inp"></label>
-      <label class="field"><span class="label">{{ t('guardian_wa_opt') }}</span>
-        <input id="npPhone" type="tel" inputmode="tel" placeholder="07XXXXXXXX" class="inp num"></label>
-      <div id="npError" class="hidden text-bad text-sm" role="alert"></div>
-      <button id="npSubmit" onclick="submitAdd()" class="btn btn-ink btn-block">{{ t('add') }}</button>
+      <!-- pick a player who already exists: they join this group -->
+      <p class="sub">{{ t('w_add_existing_hint') }}</p>
+      <input id="exSearch" type="search" autocomplete="off" class="inp" placeholder="{{ t('search_player') }}"
+             oninput="renderExisting()" aria-label="{{ t('search_player') }}">
+      <div id="exList" class="rows max-h-[46vh] overflow-y-auto border border-edge rounded"></div>
+      <details id="newBox">
+        <summary class="sub font-semibold py-2 text-accent">{{ t('w_add_new_instead') }}</summary>
+        <div class="space-y-3 pt-2">
+          <p class="sub">{{ t('add_player_hint') }}</p>
+          <label class="field"><span class="label">{{ t('player_name') }}</span>
+            <input id="npName" type="text" autocomplete="off" class="inp"></label>
+          <label class="field"><span class="label">{{ t('guardian_wa_opt') }}</span>
+            <input id="npPhone" type="tel" inputmode="tel" placeholder="07XXXXXXXX" class="inp num"></label>
+          <div id="npError" class="hidden text-bad text-sm" role="alert"></div>
+          <button id="npSubmit" onclick="submitAdd()" class="btn btn-line btn-block">{{ t('add') }}</button>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -198,13 +208,16 @@ const TODAY = {{ today|tojson }};
 const SCHEDULE = {{ schedule|tojson }};   // [{from, days:[...]}], oldest first
 const CLOSED = new Set({{ closed|tojson }});
 const CLOSED_G = new Set({{ (closed_groups or [])|tojson }});   // "date|groupId": only that group's session is off
+const GDAYS = {{ gdays|tojson }};   // groupId -> its own training days ([] = academy days)
 const I18N = {
   left: {{ t('left_badge')|tojson }}, leftShort: {{ t('c_left_short')|tojson }}, noSub: {{ t('no_sub_badge')|tojson }}, saveError: {{ t('save_error')|tojson }},
   newBadge: {{ t('new_badge')|tojson }}, addPlayer: {{ t('add_player')|tojson }}, addFailed: {{ t('add_failed')|tojson }},
   add: {{ t('add')|tojson }}, adding: {{ t('adding')|tojson }}, today: {{ t('today')|tojson }},
   yesterday: {{ t('yesterday')|tojson }}, tomorrow: {{ t('tomorrow')|tojson }}, notTraining: {{ t('not_training_day')|tojson }},
   markedOf: {{ t('marked_of')|tojson }}, closedDay: {{ t('c_closed_day')|tojson }}, frozenN: {{ t('c_frozen_n')|tojson }},
-  frozenToast: {{ t('c_frozen_toast')|tojson }}, unpaid: {{ t('c_unpaid')|tojson }}, coachFail: {{ t('save_error')|tojson }}
+  frozenToast: {{ t('c_frozen_toast')|tojson }}, unpaid: {{ t('c_unpaid')|tojson }}, coachFail: {{ t('save_error')|tojson }},
+  trial: {{ t('trial_tag')|tojson }}, trialFree: {{ t('trial_available')|tojson }}, onSheet: {{ t('w_on_sheet')|tojson }},
+  noMatch: {{ t('no_results')|tojson }}
 };
 const SVG = {
   present: '<svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
@@ -221,10 +234,18 @@ function isoShift(iso, delta){ const d=new Date(iso+'T12:00:00'); d.setDate(d.ge
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function daysOn(iso){ let cur = SCHEDULE.length ? SCHEDULE[0].days : [];
   for (const e of SCHEDULE) { if (e.from <= iso) cur = e.days; else break; } return cur; }
+function groupDays(gid, iso){ const own = GDAYS[gid]; return own && own.length ? own : daysOn(iso); }
 function trainingState(iso){
-  if (CLOSED.has(iso) || CLOSED_G.has(iso + '|' + document.getElementById('group').value)) return 'closed';
+  const gid = document.getElementById('group').value;
+  if (CLOSED.has(iso) || CLOSED_G.has(iso + '|' + gid)) return 'closed';
   const wd = new Date(iso+'T12:00:00').toLocaleDateString('en-US',{weekday:'long'});
-  return daysOn(iso).includes(wd) ? 'training' : 'off';
+  return (gid ? groupDays(gid, iso) : daysOn(iso)).includes(wd) ? 'training' : 'off';
+}
+// groups that don't train on the shown date fade back (still tappable for an extra session)
+function dimChips(){
+  const wd = new Date(curDate+'T12:00:00').toLocaleDateString('en-US',{weekday:'long'});
+  document.querySelectorAll('#groupChips .da-tab').forEach(c => {
+    c.style.opacity = groupDays(c.dataset.gid, curDate).includes(wd) ? '' : '.5'; });
 }
 function setDateSub(state, wd){
   const el = document.getElementById('dateSub');
@@ -240,6 +261,7 @@ function refreshDateUI(){
   setDateSub(trainingState(curDate), wd);
   document.getElementById('todayBtn').classList.toggle('hidden', curDate === TODAY);
   dateInp.value = curDate;
+  dimChips();
 }
 
 async function load(){
@@ -275,10 +297,12 @@ function render(){
     card.type = 'button';
     card.className = `ptile ${p.status !== 'none' ? p.status : ''} ${!p.paid ? 'nopkg' : ''}`;
     card.setAttribute('aria-pressed', p.status === 'present' ? 'true' : 'false');
-    const tot = Math.min(p.total || 0, 30), used = Math.max(0, tot - (p.left || 0));
-    const boxes = tot ? `<span class="tally">${Array.from({length: tot}, (_, i) => `<i class="${i < used ? 'on' : (i === used ? 'nx' : '')}"></i>`).join('')}</span>` : '';
+    // "9/12 · 3 left": plain numbers, no boxes
+    const used = Math.max(0, (p.total || 0) - (p.left || 0));
     const left = p.paid
-      ? `${boxes}<span class="left-n">${_esc(I18N.leftShort.replace('{n}', p.left))}</span>`
+      ? `<span class="num font-bold">${used}/${p.total}</span><span class="left-n">${_esc(I18N.leftShort.replace('{n}', p.left))}</span>`
+      : p.trial ? `<span class="tag">${_esc(I18N.trial)}</span>`
+      : p.trial_ok ? `<span class="tag ${p.status==='none' ? 'tag-ok' : ''}">${_esc(I18N.trialFree)}</span>`
       : `<span class="tag ${p.status==='none' ? 'tag-bad' : ''}">${_esc(I18N.noSub)}</span>`;
     card.innerHTML = `
       <div class="nm">${_esc(p.name)}</div>
@@ -315,7 +339,7 @@ async function mark(p, status){
   if (r.status === 409) { toast(I18N.frozenToast); load(); return; }
   if (!r.ok) { toast(I18N.saveError); return; }
   const d = await r.json();
-  p.status = d.status; p.left = d.left; p.paid = d.paid; p.unpaid = d.unpaid;
+  p.status = d.status; p.left = d.left; p.paid = d.paid; p.unpaid = d.unpaid; p.trial = d.trial; p.trial_ok = d.trial_ok;
   justMarked = p.id;
   if (navigator.vibrate) navigator.vibrate(12);
   render();
@@ -350,10 +374,38 @@ function copySummary(){
     .finally(() => document.getElementById('copied').classList.remove('hidden'));
 }
 
-function openAdd(){
+let ALL = null;   // every current player, loaded once for the search
+async function openAdd(){
   document.getElementById('npName').value=''; document.getElementById('npPhone').value='';
   document.getElementById('npError').classList.add('hidden');
-  openSheet('addModal'); setTimeout(() => document.getElementById('npName').focus(), 80);
+  document.getElementById('newBox').open = false;
+  document.getElementById('exSearch').value = '';
+  openSheet('addModal');
+  if (!ALL) { const r = await fetch('/api/players/brief'); ALL = r.ok ? await r.json() : []; }
+  renderExisting();
+}
+function renderExisting(){
+  const q = document.getElementById('exSearch').value.trim().toLowerCase();
+  const onSheet = new Set(players.map(p => p.id));
+  const hits = (ALL || []).filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 60);
+  const box = document.getElementById('exList');
+  box.innerHTML = hits.length ? hits.map(p => `
+    <button type="button" class="row w-full text-start" data-pid="${p.id}" ${onSheet.has(p.id) ? 'disabled' : ''} style="min-height:48px">
+      <span class="flex-1 min-w-0"><span class="font-bold block truncate">${_esc(p.name)}</span>
+        <span class="sub block truncate">${_esc(p.group || '-')}</span></span>
+      <span class="end">${onSheet.has(p.id) ? `<span class="tag">${_esc(I18N.onSheet)}</span>`
+        : '<svg class="w-5 h-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>'}</span>
+    </button>`).join('') : `<div class="empty">${_esc(I18N.noMatch)}</div>`;
+  box.querySelectorAll('[data-pid]:not([disabled])').forEach(b => b.addEventListener('click', () => addExisting(+b.dataset.pid, b)));
+}
+async function addExisting(pid, btn){
+  btn.disabled = true;
+  const r = await fetch('/api/attendance/add-existing', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({player_id: pid, group_id: groupSel.value, date: curDate}) });
+  if (!r.ok) { btn.disabled = false; toast(I18N.saveError); return; }
+  const d = await r.json();
+  players.push(d.player); players.sort((a,b) => a.name.localeCompare(b.name));
+  closeSheet('addModal'); render();
 }
 async function submitAdd(){
   const name = document.getElementById('npName').value.trim();
@@ -367,6 +419,7 @@ async function submitAdd(){
   if (!r.ok) { err.textContent = I18N.addFailed; err.classList.remove('hidden'); return; }
   const d = await r.json();
   players.push(d.player); players.sort((a,b) => a.name.localeCompare(b.name));
+  ALL = null;
   closeSheet('addModal'); render();
 }
 

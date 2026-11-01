@@ -42,6 +42,31 @@
           </select></label>
         <label class="field"><span class="label">{{ t('joined') }}</span>
           <input id="join_date" name="join_date" type="date" value="{{ val('join_date', today) }}" class="inp num"></label>
+
+        <!-- the player's own schedule: their group's days by default; untick a day they skip,
+             or tick days of another group they also train with -->
+        <fieldset class="sm:col-span-2 field" id="schedBox">
+          <legend class="label mb-1">{{ t('w_player_schedule') }}</legend>
+          <span class="sub mb-2">{{ t('w_player_schedule_hint') }}</span>
+          <div id="schedMain"></div>
+          <details id="schedOther" class="mt-1">
+            <summary class="sub font-semibold py-2 text-accent">{{ t('w_also_other_group') }}</summary>
+          <div class="grid gap-2" id="schedOtherList">
+            {% for g in groups %}
+            <div class="sched-g flex items-start gap-2 flex-wrap py-1.5 border-b border-edge" data-gid="{{ g.id }}">
+              <span class="font-semibold text-[13.5px] w-full">{{ g.name_ar if lang == 'ar' else g.name_en }}</span>
+              {% for s in (gsl[g.id] or [{'day': '*', 'time': ''}]) %}
+              {% set v = g.id ~ ':' ~ s.day %}
+              <label class="check !py-1 !min-h-0 border border-edge rounded px-2.5">
+                <input type="checkbox" name="slot" value="{{ v }}" {% if v in picked %}checked{% endif %}>
+                <span class="num text-[13px]">{% if s.day == '*' %}{{ t('w_grp_academy_days') }}{% else %}{{ DAY_AR[s.day] if lang == 'ar' else s.day[:3] }}{% if s.time %} {{ s.time }}{% endif %}{% endif %}</span>
+              </label>
+              {% endfor %}
+            </div>
+            {% endfor %}
+          </div>
+          </details>
+        </fieldset>
       </div>
     </section>
 
@@ -76,7 +101,7 @@
             <option value="left" {% if player and player.status=='left' %}selected{% endif %}>{{ t('st_left') }}</option>
           </select></label>
         <div>
-          <label class="check !py-0 h-[44px]"><input type="checkbox" name="trial_used" {% if (player and player.trial_used) or not player %}checked{% endif %}> {{ t('trial_used') }}</label>
+          <label class="check !py-0 h-[44px]"><input type="checkbox" name="trial_used" {% if player and player.trial_used %}checked{% endif %}> {{ t('trial_used') }}</label>
         </div>
         <div class="sub sm:col-span-2 -mt-2">{{ t('trial_hint') }}{% if player %} {{ t('p_freeze_from_card') }}{% endif %}</div>
       </div>
@@ -147,10 +172,28 @@ async function suggest() {
   if (!isNew || !bd.value) return;
   const r = await fetch(`/api/suggest-group?birth_date=${bd.value}&gender=${gen.value}`);
   const d = await r.json();
-  if (d.group_id) { grp.value = d.group_id; note.textContent = SUGGEST_NOTE; }
+  if (d.group_id) { grp.value = d.group_id; note.textContent = SUGGEST_NOTE; followGroup(); }
 }
 bd.addEventListener('change', suggest);
 gen.addEventListener('change', suggest);
+
+// the schedule follows the chosen group until the admin ticks days by hand;
+// the chosen group's row moves to the top
+let schedTouched = {{ 'true' if player and player.slots else 'false' }};
+document.querySelectorAll('#schedBox input').forEach(c => c.addEventListener('change', () => {
+  schedTouched = true; if (window.preview) preview(); }));
+function followGroup(){
+  // the chosen group's days sit on top; other groups fold away unless one of their days is ticked
+  const main = document.getElementById('schedMain'), other = document.getElementById('schedOtherList');
+  main.querySelectorAll('.sched-g').forEach(r => other.appendChild(r));
+  const row = grp.value && other.querySelector(`.sched-g[data-gid="${grp.value}"]`);
+  if (row) main.appendChild(row);
+  if (other.querySelector('input:checked')) document.getElementById('schedOther').open = true;
+  if (schedTouched) return;
+  document.querySelectorAll('#schedBox input').forEach(c => { c.checked = !!row && row.contains(c); });
+  if (window.preview) preview();
+}
+grp.addEventListener('change', followGroup);
 
 {% if not player %}
 const LOCALE = {{ lang|tojson }} === 'ar' ? 'ar-JO-u-nu-latn' : 'en-GB';
@@ -164,7 +207,8 @@ function preview() {
     const n = parseInt($('subSessions').value) || 0, s = $('subStart').value;
     if (!n || !s) { $('subPreview').textContent = ''; return; }
     try {
-      const d = await (await fetch(`/api/sub-preview?start=${s}&sessions=${n}`)).json();
+      const slots = [...document.querySelectorAll('#schedBox input:checked')].map(c => c.value).join(',');
+      const d = await (await fetch(`/api/sub-preview?start=${s}&sessions=${n}&slots=${encodeURIComponent(slots)}`)).json();
       $('subPreview').textContent = d.first ? T_PREVIEW.replace('{n}', d.count).replace('{a}', fmt(d.first)).replace('{b}', fmt(d.end)) : '';
     } catch (e) {}
   }, 150);
@@ -185,5 +229,6 @@ $('subPrice').addEventListener('input', () => { if (!paidTouched) $('subPaid').v
 $('createSub').addEventListener('change', e => $('subFields').classList.toggle('hidden', !e.target.checked));
 preview(); owe();
 {% endif %}
+followGroup();
 </script>
 {% endblock %}

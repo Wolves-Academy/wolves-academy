@@ -18,12 +18,23 @@
       <option value="F" {% if g and g.gender=='F' %}selected{% endif %}>{{ t('females') }}</option>
     </select></label>
 </div>
-<div class="grid grid-cols-2 gap-3">
-  <label class="field"><span class="label">{{ t('training_days') }}</span>
-    <input name="schedule_days" value="{{ g.schedule_days if g else 'Sun/Tue/Thu' }}" class="inp" placeholder="Sun/Tue/Thu"></label>
-  <label class="field"><span class="label">{{ t('time_slot') }}</span>
-    <input name="time_slot" value="{{ g.time_slot if g else '' }}" class="inp num" placeholder="4:00-5:30"></label>
-</div>
+<!-- each day has its own time: Sunday 5:00, Saturday 6:00 -->
+{% set mine = gslots.get(g.id, {}) if g else {} %}
+<fieldset class="field">
+  <legend class="label mb-1.5">{{ t('w_grp_days') }}</legend>
+  <div class="grid gap-1.5">
+    {% for d in week %}
+    <div class="flex items-center gap-2">
+      <label class="check !py-0 h-10 w-[128px] shrink-0"><input type="checkbox" name="day_{{ d }}" {% if d in mine %}checked{% endif %}
+             onchange="this.closest('div').querySelector('input[type=text]').disabled = !this.checked">
+        {{ DAY_AR[d] if lang == 'ar' else d }}</label>
+      <input type="text" name="time_{{ d }}" value="{{ mine.get(d, '') }}" {% if d not in mine %}disabled{% endif %}
+             class="inp inp-sm num flex-1 min-w-0 disabled:opacity-40" placeholder="5:00-6:30" aria-label="{{ t('time_slot') }} {{ d }}">
+    </div>
+    {% endfor %}
+  </div>
+  <span class="sub mt-1">{{ t('w_grp_days_hint') }}</span>
+</fieldset>
 <label class="field"><span class="label">{{ t('w_grp_wa') }}</span>
   <input name="wa_link" type="url" dir="ltr" value="{{ g.wa_link if g and g.wa_link else '' }}" class="inp"
          placeholder="https://chat.whatsapp.com/..." pattern="https://(chat\.whatsapp\.com|wa\.me)/.+"></label>
@@ -49,7 +60,7 @@
           <div class="flex-1 min-w-0">
             <div class="font-bold truncate">{{ g.name_ar if lang == 'ar' else g.name_en }}
               <span class="sub font-medium">· {{ g.name_en if lang == 'ar' else g.name_ar }}</span></div>
-            <div class="sub num mt-0.5">{{ g.time_slot or '-' }} · {{ g.schedule_days }} · {{ t('mixed') if g.gender=='mixed' else (t('males') if g.gender=='M' else t('females')) }} · {{ g.min_age }}-{{ g.max_age }}</div>
+            <div class="sub num mt-0.5">{{ glabel[g.id] or t('w_grp_academy_days') }} · {{ t('mixed') if g.gender=='mixed' else (t('males') if g.gender=='M' else t('females')) }} · {{ g.min_age }}-{{ g.max_age }}</div>
           </div>
           <span class="end">
             {% if g.wa_link %}<a href="{{ g.wa_link }}" target="_blank" rel="noopener" class="btn btn-wa btn-sm btn-icon" onclick="event.stopPropagation()"

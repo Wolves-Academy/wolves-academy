@@ -83,11 +83,21 @@
 
       <section class="sheet">
         <div class="sheet-hd"><h2 class="h-sec">{{ t('w_days_worked') }}</h2><span class="meta num">{{ days|length }}</span></div>
+        <!-- forgot to scan (e.g. yesterday)? add the day here -->
+        <form method="post" action="/coaches/{{ c.id }}/present" class="sheet-bd !py-3 flex gap-2 items-end ledger-rule">
+          <input type="hidden" name="back" value="/coaches/{{ c.id }}">
+          <label class="field flex-1"><span class="label">{{ t('w_add_day') }}</span>
+            <input type="date" name="date" class="inp inp-sm num" value="{{ yesterday }}" max="{{ today }}" required></label>
+          <button class="btn btn-ink btn-sm">{{ icon('plus','w-4 h-4') }}{{ t('add') }}</button>
+        </form>
         <div class="rows">
           {% for d in days %}
           <div class="row" style="min-height:44px">
             <span class="flex-1">{{ dmon(d.session_date, lang) }} <span class="sub num">{{ d.session_date[:4] }}</span></span>
-            <span class="sub">{% if d.check_in %}{{ t('w_in_at', t=d.check_in) }}{% else %}{{ t('w_marked_by_admin') }}{% endif %}</span>
+            <span class="sub">{% if d.check_in %}{{ t('w_in_at', t=d.check_in) }}{% else %}{{ t('w_marked_by_admin') }}{% endif %}{% if d.method %} · {{ {'qr': t('w_via_qr'), 'whatsapp': t('w_via_wa'), 'admin': t('w_via_admin'), 'marks': t('w_via_marks')}.get(d.method, '') }}{% endif %}</span>
+            <form method="post" action="/coaches/{{ c.id }}/present" onsubmit="return confirm({{ t('w_remove_day_q')|tojson }})">
+              <input type="hidden" name="date" value="{{ d.session_date }}"><input type="hidden" name="back" value="/coaches/{{ c.id }}">
+              <button class="btn btn-quiet btn-xs btn-icon" aria-label="{{ t('delete') }}">{{ icon('x','w-3.5 h-3.5') }}</button></form>
           </div>
           {% else %}<div class="empty">{{ t('w_no_days') }}</div>{% endfor %}
         </div>

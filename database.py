@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS groups (
     gender TEXT DEFAULT 'mixed',
     schedule_days TEXT DEFAULT 'Sun/Tue/Thu',
     time_slot TEXT DEFAULT '',
-    wa_link TEXT DEFAULT ''                -- WhatsApp group invite link
+    wa_link TEXT DEFAULT '',               -- WhatsApp group invite link
+    slots TEXT DEFAULT ''                  -- JSON [{"day":"Sunday","time":"5:00-6:30"}], empty = academy days
 );
 CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,7 +81,8 @@ CREATE TABLE IF NOT EXISTS players (
     photo TEXT DEFAULT '',
     status TEXT DEFAULT 'active',          -- active / frozen / left
     trial_used INTEGER DEFAULT 0,
-    frozen_at TEXT                          -- date freezing started (NULL if not frozen)
+    frozen_at TEXT,                         -- date freezing started (NULL if not frozen)
+    slots TEXT DEFAULT ''                   -- own schedule "3:*,5:Saturday", empty = all of group_id's days
 );
 CREATE TABLE IF NOT EXISTS subscriptions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -320,8 +322,21 @@ def _columns(con, table):
     return {r["name"] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
+SCHEMA_V = 2   # bump when SCHEMA/_migrate change; a cold start skips setup when the DB is current
+
+
 def init_db():
     con = get_db()
+    try:
+        row = con.execute("SELECT data FROM settings WHERE id=1").fetchone()
+        if row and json.loads(row["data"]).get("schema_v") == SCHEMA_V:
+            con.close()   # ~30 round trips saved on every serverless cold start
+            return
+    except Exception:
+        try:
+            con.rollback()   # Postgres: the failed query (no tables yet) aborts the transaction
+        except Exception:
+            pass
     con.executescript(SCHEMA)
     _migrate(con)
     if con.execute("SELECT COUNT(*) c FROM groups").fetchone()["c"] == 0:
@@ -350,6 +365,17 @@ def init_db():
         data.pop("deduct_on_absence", None)
         data["wolves_pricing"] = True
         changed = True
+    if not data.get("trial_fix"):
+        # the add-player form used to tick "trial used" by default, so nobody got a free
+        # trial: give it back to everyone who never had a trial mark or a package
+        con.execute("UPDATE players SET trial_used=0 WHERE trial_used=1 "
+                    "AND NOT EXISTS (SELECT 1 FROM attendance a WHERE a.player_id=players.id AND a.trial=1) "
+                    "AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.player_id=players.id)")
+        data["trial_fix"] = True
+        changed = True
+    if data.get("schema_v") != SCHEMA_V:
+        data["schema_v"] = SCHEMA_V
+        changed = True
     if changed:
         con.execute("UPDATE settings SET data=? WHERE id=1", (json.dumps(data, ensure_ascii=False),))
     con.commit()
@@ -364,8 +390,22 @@ def _migrate(con):
     acols = _columns(con, "attendance")
     if "trial" not in acols:
         con.execute("ALTER TABLE attendance ADD COLUMN trial INTEGER DEFAULT 0")
-    if "wa_link" not in _columns(con, "groups"):
+    gcols = _columns(con, "groups")
+    if "wa_link" not in gcols:
         con.execute("ALTER TABLE groups ADD COLUMN wa_link TEXT DEFAULT ''")
+    if "slots" not in gcols:
+        con.execute("ALTER TABLE groups ADD COLUMN slots TEXT DEFAULT ''")
+        # the free-text days/time typed before become real per-day slots; text left at the
+        # form's old default takes the academy's real training days so packages count as before
+        row = con.execute("SELECT data FROM settings WHERE id=1").fetchone()
+        academy = "/".join((json.loads(row["data"]) if row else {}).get("training_days")
+                           or DEFAULT_SETTINGS["training_days"])
+        for g in con.execute("SELECT id, schedule_days, time_slot FROM groups").fetchall():
+            text = g["schedule_days"] if (g["schedule_days"] or "Sun/Tue/Thu") != "Sun/Tue/Thu" else academy
+            con.execute("UPDATE groups SET slots=? WHERE id=?",
+                        (json.dumps(parse_days_text(text, g["time_slot"])), g["id"]))
+    if "slots" not in cols:
+        con.execute("ALTER TABLE players ADD COLUMN slots TEXT DEFAULT ''")
     if "method" not in _columns(con, "coach_attendance"):
         con.execute("ALTER TABLE coach_attendance ADD COLUMN method TEXT DEFAULT ''")
     scols = _columns(con, "subscriptions")
@@ -437,6 +477,119 @@ _EPOCH = date(2000, 1, 1)
 
 def _d(v):
     return v if isinstance(v, date) else date.fromisoformat(v)
+
+
+# ----- per-group / per-player schedules -----
+# A group trains on its own days and times (slots). A player follows all of their group's
+# days unless they pick their own: tokens "gid:*" (every day of that group) or "gid:Saturday".
+# A player can train with more than one group this way.
+
+WEEK_ORDER = ["Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]  # Jordan's week
+
+
+def parse_days_text(days_text, time_text=""):
+    """'Sun/Tue/Thu' (+ one time for all) -> slots. Unknown words are ignored."""
+    out = []
+    for w in re.split(r"[/,\s]+", days_text or ""):
+        day = next((n for n in WEEK_ORDER if w and n.lower().startswith(w.lower()[:3])), None)
+        if day and all(s["day"] != day for s in out):
+            out.append({"day": day, "time": (time_text or "").strip()})
+    return sorted(out, key=lambda s: WEEK_ORDER.index(s["day"]))
+
+
+def group_slots(g):
+    """[{'day', 'time'}] of a group row in week order; empty = follows the academy's training days."""
+    try:
+        raw = json.loads((g["slots"] if "slots" in g.keys() else "") or "[]")
+    except (ValueError, TypeError):
+        return []
+    out = [s for s in raw if isinstance(s, dict) and s.get("day") in _WD]
+    return sorted(out, key=lambda s: WEEK_ORDER.index(s["day"]))
+
+
+def slots_label(slots, lang="en"):
+    """'Sat 6:00 · Sun 5:00' for display."""
+    ar = {"Saturday": "السبت", "Sunday": "الأحد", "Monday": "الاثنين", "Tuesday": "الثلاثاء",
+          "Wednesday": "الأربعاء", "Thursday": "الخميس", "Friday": "الجمعة"}
+    times = {s.get("time") for s in slots}
+    name = (lambda d: ar[d]) if lang == "ar" else (lambda d: d[:3])
+    if len(times) == 1:   # same time every day: "Sun/Tue/Thu 5:00"
+        t = times.pop()
+        return "/".join(name(s["day"]) for s in slots) + (f" {t}" if t else "")
+    return " · ".join(f'{name(s["day"])} {s.get("time") or ""}'.strip() for s in slots)
+
+
+def _groups_map(con):
+    cached = _cached(con, "groups", lambda c: {r["id"]: Row(dict(r)) for r in c.execute("SELECT * FROM groups").fetchall()})
+    if cached is not None:
+        return cached
+    return {r["id"]: r for r in con.execute("SELECT * FROM groups").fetchall()}
+
+
+def _player_row(con, player_id):
+    cached = _cached(con, "players", lambda c: {r["id"]: Row(dict(r)) for r in c.execute("SELECT * FROM players").fetchall()})
+    if cached is not None:
+        return cached.get(player_id)
+    return con.execute("SELECT * FROM players WHERE id=?", (player_id,)).fetchone()
+
+
+def player_tokens(p):
+    """The player's schedule tokens; no own pick = every day of their group."""
+    raw = ((p["slots"] if "slots" in p.keys() else "") or "")
+    toks = [t.strip() for t in raw.split(",") if ":" in t]
+    if not toks and p["group_id"]:
+        toks = [f"{p['group_id']}:*"]
+    return toks
+
+
+def tokens_to_store(p_group_id, toks):
+    """What goes in players.slots: '' when it's just 'all of my group'."""
+    toks = list(dict.fromkeys(t for t in toks if ":" in t))
+    return "" if toks == [f"{p_group_id}:*"] or not toks else ",".join(toks)
+
+
+def player_group_ids(p):
+    return {int(t.split(":")[0]) for t in player_tokens(p) if t.split(":")[0].isdigit()}
+
+
+def player_weekdays(con, player_id):
+    """Weekday ints the player trains on, or None to follow the academy's training days."""
+    p = _player_row(con, player_id)
+    return weekdays_of(p, _groups_map(con)) if p else None
+
+
+def weekdays_of(p, groups):
+    """Weekday ints of a player row (or {'group_id', 'slots'}) given {gid: group row}."""
+    wds = set()
+    for tok in player_tokens(p):
+        gid, day = tok.split(":", 1)
+        g = groups.get(int(gid)) if gid.isdigit() else None
+        if not g:
+            continue
+        gdays = {_WD[s["day"]] for s in group_slots(g)}
+        if day == "*":
+            if not gdays:
+                return None   # that group trains on the academy days
+            wds |= gdays
+        elif day in _WD:
+            wds.add(_WD[day])
+    return wds or None
+
+
+def group_days(g):
+    """Weekday names a group trains on; empty = the academy's training days."""
+    return [s["day"] for s in group_slots(g)]
+
+
+def on_roster(p, gid, d, g=None):
+    """Is player p on group gid's sheet on date d? On a day the group doesn't normally
+    train (an extra session) every member shows."""
+    wd = WEEKDAY_NAMES[_d(d).weekday()]
+    mine = [t.split(":", 1)[1] for t in player_tokens(p) if t.split(":")[0] == str(gid)]
+    if not mine:
+        return False
+    gd = group_days(g) if g is not None else []
+    return "*" in mine or wd in mine or (gd and wd not in gd)
 
 
 # ----- training-day schedule (changes over time) -----
@@ -528,19 +681,20 @@ def scheduled_session_dates(start_iso, count, wds):
     return out
 
 
-def session_dates(start, count, settings=None, skip=None):
+def session_dates(start, count, settings=None, skip=None, wds=None):
     """The next `count` real sessions on/after `start`: training days per the
-    schedule in force on each date, minus closed days and any date `skip(d)`
-    rejects (a player's freeze)."""
+    schedule in force on each date (or the player's own weekdays `wds`), minus
+    closed days and any date `skip(d)` rejects (a player's freeze)."""
     settings = settings or get_settings()
     entries = schedule_entries(settings)
     closed = closed_dates(settings)
-    if count <= 0 or not any(w for _, w in entries):
+    if count <= 0 or not (wds or any(w for _, w in entries)):
         return []
     d = _d(start)
     out = []
     for _ in range(3660):
-        if d.weekday() in weekdays_on(entries, d) and d not in closed and not (skip and skip(d)):
+        if (d.weekday() in wds if wds else d.weekday() in weekdays_on(entries, d)) \
+                and d not in closed and not (skip and skip(d)):
             out.append(d)
             if len(out) >= count:
                 break
@@ -642,19 +796,13 @@ def group_closed_dates(settings, group_id):
             if isinstance(c, dict) and c.get("group_id") and int(c["group_id"]) == int(group_id)}
 
 
-def _player_group(con, player_id):
-    groups = _cached(con, "player_groups", lambda c: {r["id"]: r["group_id"] for r in c.execute(
-        "SELECT id, group_id FROM players").fetchall()})
-    if groups is not None:
-        return groups.get(player_id)
-    r = con.execute("SELECT group_id FROM players WHERE id=?", (player_id,)).fetchone()
-    return r["group_id"] if r else None
-
-
 def player_skipper(con, player_id, settings):
-    """skip(d) for a player's session math: their freezes + their group's cancelled sessions."""
+    """skip(d) for a player's session math: their freezes + their groups' cancelled sessions."""
     fs = _freeze_skipper(freeze_ranges(con, player_id))
-    gclosed = group_closed_dates(settings, _player_group(con, player_id))
+    p = _player_row(con, player_id)
+    gclosed = set()
+    for gid in (player_group_ids(p) if p else ()):
+        gclosed |= group_closed_dates(settings, gid)
     if not gclosed:
         return fs
     return lambda d: d in gclosed or bool(fs and fs(d))
@@ -680,7 +828,8 @@ def sub_progress(con, sub, settings=None):
     # legacy: freezes before player_freezes existed shifted the calendar by N days
     paused = int(sub["paused_days"]) if ("paused_days" in sub.keys() and sub["paused_days"]) else 0
     today = date.today()
-    sched = session_dates(sub["start_date"], total, settings, player_skipper(con, sub["player_id"], settings))
+    sched = session_dates(sub["start_date"], total, settings, player_skipper(con, sub["player_id"], settings),
+                          player_weekdays(con, sub["player_id"]))
     if sched:
         expiry_iso = (sched[-1] + timedelta(days=paused)).isoformat()
         cutoff = today - timedelta(days=paused)
@@ -931,9 +1080,21 @@ def mark_attendance(con, player_id, session_date, group_id, status, marked_by=""
     return {"status": status, "unpaid": bool(unpaid), "trial": bool(trial)}
 
 
-def freeze_player(con, player_id, on=None):
-    """Freeze from date `on` (default today; may be backdated). The session
-    calendar stops for the whole freeze, so no sessions are lost."""
+def freeze_player(con, player_id, on=None, until=None):
+    """Freeze from date `on` (default today; may be backdated). With `until` (last frozen
+    day) the freeze is a fixed period that may lie in the future, e.g. a trip; it starts
+    and ends by itself (sync_freeze_status). The session calendar stops for the whole
+    freeze, so no sessions are lost."""
+    if until:
+        start, last = _d(on or today_str()), _d(until)
+        if last < start:
+            start, last = last, start
+        con.execute("INSERT INTO player_freezes (player_id, start_date, end_date) VALUES (?,?,?)",
+                    (player_id, start.isoformat(), (last + timedelta(days=1)).isoformat()))
+        con.commit()
+        sync_freeze_status(con, force=True)
+        refresh_unpaid(con, player_id)
+        return
     on = min(_d(on or today_str()), date.today()).isoformat()
     if not con.execute("SELECT 1 FROM player_freezes WHERE player_id=? AND end_date IS NULL",
                        (player_id,)).fetchone():
@@ -943,11 +1104,33 @@ def freeze_player(con, player_id, on=None):
     refresh_unpaid(con, player_id)
 
 
+_FREEZE_SYNC = {"day": None}
+
+
+def sync_freeze_status(con, force=False):
+    """Status follows dated freezes: frozen while today is inside one, active after it ends.
+    Runs once a day per process (two UPDATEs)."""
+    today = today_str()
+    if _FREEZE_SYNC["day"] == today and not force:
+        return
+    inside = ("EXISTS (SELECT 1 FROM player_freezes f WHERE f.player_id=players.id AND f.start_date<=? "
+              "AND (f.end_date IS NULL OR f.end_date>?))")
+    con.execute(f"UPDATE players SET status='active', frozen_at=NULL WHERE status='frozen' AND NOT {inside} "
+                "AND EXISTS (SELECT 1 FROM player_freezes f WHERE f.player_id=players.id)", (today, today))
+    con.execute(f"UPDATE players SET status='frozen', frozen_at=? WHERE status='active' AND {inside}",
+                (today, today, today))
+    con.commit()
+    _FREEZE_SYNC["day"] = today
+
+
 def unfreeze_player(con, player_id, on=None):
     """Back to active from date `on` (default today; may be backdated)."""
     on = min(_d(on or today_str()), date.today())
     row = con.execute("SELECT * FROM player_freezes WHERE player_id=? AND end_date IS NULL",
                       (player_id,)).fetchone()
+    if not row:   # a dated freeze running today: end it early
+        row = con.execute("SELECT * FROM player_freezes WHERE player_id=? AND start_date<=? AND end_date>?",
+                          (player_id, on.isoformat(), on.isoformat())).fetchone()
     if row:
         if on <= _d(row["start_date"]):
             con.execute("DELETE FROM player_freezes WHERE id=?", (row["id"],))  # cancelled same day

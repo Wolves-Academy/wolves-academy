@@ -149,13 +149,22 @@ def gate_coachday():
     row = con.execute("SELECT method FROM coach_attendance WHERE coach_id=? AND session_date=?", (lina["id"], iso(0))).fetchone()
     check(row and row["method"] == "whatsapp", "WhatsApp link checks the coach in")
     check(db.checkin_token(con, wtok) is None, "WhatsApp link works once")
-    # marking players no longer checks the coach in
+    # a coach taking attendance (even yesterday's, filled in late) is on court that day
     pid = new_player(con, "Auto Kid")
     db.create_subscription(con, pid, iso(-5), price=20, sessions_total=12)
     c.post("/api/attendance/mark", json={"player_id": pid, "date": iso(-1), "group_id": 1, "status": "present"},
            environ_base=REMOTE)
+    row = con.execute("SELECT method FROM coach_attendance WHERE coach_id=? AND session_date=?",
+                      (lina["id"], iso(-1))).fetchone()
+    check(row and row["method"] == "marks", "taking attendance checks the coach in for that day")
+    c.post("/api/attendance/mark", json={"player_id": pid, "date": iso(3), "group_id": 1, "status": "present"},
+           environ_base=REMOTE)
     check(not con.execute("SELECT 1 FROM coach_attendance WHERE coach_id=? AND session_date=?",
-                          (lina["id"], iso(-1))).fetchone(), "marking attendance does not check the coach in")
+                          (lina["id"], iso(3))).fetchone(), "no check-in for a future date")
+    # admin adds a forgotten day from the coach page
+    r = a.post(f"/coaches/{lina['id']}/present", data={"date": iso(-2), "back": f"/coaches/{lina['id']}"})
+    check(r.status_code == 302 and con.execute("SELECT 1 FROM coach_attendance WHERE coach_id=? AND session_date=?",
+                                               (lina["id"], iso(-2))).fetchone(), "admin adds a past day")
     check(con.execute("SELECT marked_by FROM attendance WHERE player_id=?", (pid,)).fetchone()["marked_by"]
           == "Coach Lina", "mark attributed to the coach")
     check(c.post(f"/coaches/{lina['id']}/present", json={"date": iso(0)}, environ_base=REMOTE).status_code in (302, 403),
@@ -467,7 +476,75 @@ def gate_import():
     return "GATE_IMPORT_OK"
 
 
-GATES = {"import": gate_import, "settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
+def gate_schedule():
+    """Groups with their own days/times, player schedules across groups, adding an existing
+    player to a group, dated freezes, the free trial on new players."""
+    set_days(["Sunday", "Tuesday", "Thursday"])
+    a = admin()
+    a.post("/groups/save", data={"name_ar": "أ", "name_en": "Weekend", "min_age": "5", "max_age": "20",
+                                 "gender": "mixed", "day_Saturday": "on", "time_Saturday": "6:00",
+                                 "day_Sunday": "on", "time_Sunday": "5:00"})
+    con = db.get_db()
+    wk = con.execute("SELECT * FROM groups WHERE name_en='Weekend'").fetchone()
+    check(db.group_days(wk) == ["Saturday", "Sunday"] and "Sat 6:00" in db.slots_label(db.group_slots(wk)),
+          "group keeps a time per day")
+    # new player in Weekend, also comes to group 1 on Tuesdays; trial box is unticked by default
+    form = a.get("/players/new").get_data(as_text=True)
+    check('name="trial_used" >' in form or 'name="trial_used">' in form, "free trial not pre-used on a new player")
+    a.post("/players/new", data={"first_name": "Sam", "last_name": "Ali", "group_id": str(wk["id"]),
+                                 "slot": [f"{wk['id']}:Saturday", f"{wk['id']}:Sunday", "1:Tuesday"],
+                                 "status": "active"})
+    p = con.execute("SELECT * FROM players WHERE first_name='Sam'").fetchone()
+    check(p["slots"] == f"{wk['id']}:*,1:Tuesday" and not p["trial_used"], "schedule stored, trial free")
+    check(db.player_weekdays(con, p["id"]) == {5, 6, 1}, "player trains Sat, Sun, Tue")
+    # 6 sessions from a Saturday: Sat Sun Tue Sat Sun Tue
+    sat = T - timedelta(days=(T.weekday() - 5) % 7)
+    sid, _ = db.create_subscription(con, p["id"], sat.isoformat(), price=85, sessions_total=6)
+    prog = db.sub_progress(con, con.execute("SELECT * FROM subscriptions WHERE id=?", (sid,)).fetchone())
+    check([d.weekday() for d in prog["dates"]] == [5, 6, 1, 5, 6, 1], "package counts the player's own days")
+    # on group 1's sheet on a Tuesday, not on a Thursday
+    tue = sat + timedelta(days=3)
+    thu = sat + timedelta(days=5)
+    names = lambda d, g: [x["name"] for x in a.get(f"/api/attendance?group={g}&date={d}").get_json()["players"]]
+    check("Sam Ali" in names(tue.isoformat(), 1) and "Sam Ali" not in names(thu.isoformat(), 1),
+          "player shows on the other group's sheet only on their day")
+    check(a.get(f"/api/attendance?group={wk['id']}&date={sat.isoformat()}").get_json()["training"],
+          "Saturday is a training day for the weekend group")
+    # add an existing player to a group from the attendance sheet
+    kid = new_player(con, "Existing Kid", gid=1)
+    r = a.post("/api/attendance/add-existing", json={"player_id": kid, "group_id": wk["id"], "date": sat.isoformat()})
+    check(r.status_code == 200 and r.get_json()["player"]["name"] == "Existing Kid", "existing player added")
+    check("Existing Kid" in names(sat.isoformat(), wk["id"]) and "Existing Kid" in names(tue.isoformat(), 1),
+          "now on both groups' sheets")
+    check(con.execute("SELECT COUNT(*) n FROM players WHERE full_name='Existing Kid'").fetchone()["n"] == 1,
+          "no duplicate player created")
+    # dated freeze in the future: planned, starts and ends by itself
+    a.post(f"/api/players/{p['id']}/freeze", json={"date": iso(10), "until": iso(20)})
+    f = con.execute("SELECT * FROM player_freezes WHERE player_id=?", (p["id"],)).fetchone()
+    check(f["start_date"] == iso(10) and f["end_date"] == iso(21), "freeze stored from..until")
+    check(con.execute("SELECT status FROM players WHERE id=?", (p["id"],)).fetchone()["status"] == "active",
+          "a planned freeze doesn't freeze today")
+    a.post(f"/api/players/{p['id']}/freeze", json={"date": iso(-2), "until": iso(2)})
+    check(con.execute("SELECT status FROM players WHERE id=?", (p["id"],)).fetchone()["status"] == "frozen",
+          "a freeze covering today freezes now")
+    fid = con.execute("SELECT id FROM player_freezes WHERE player_id=? AND start_date=?", (p["id"], iso(-2))).fetchone()["id"]
+    a.post(f"/freezes/{fid}/delete")
+    check(con.execute("SELECT status FROM players WHERE id=?", (p["id"],)).fetchone()["status"] == "active",
+          "deleting the freeze makes the player active again")
+    # free trial: a brand-new player's first session is free and shows on the tile
+    newbie = new_player(con, "Trial Kid", gid=wk["id"], trial_used=0)
+    tile = next(x for x in a.get(f"/api/attendance?group={wk['id']}&date={iso(0)}").get_json()["players"]
+                if x["name"] == "Trial Kid")
+    check(tile["trial_ok"], "tile shows the free trial")
+    d = a.post("/api/attendance/mark", json={"player_id": newbie, "date": iso(0), "group_id": wk["id"],
+                                            "status": "present"}).get_json()
+    check(d["trial"] and not d["unpaid"] and not d["trial_ok"], "first session is the free trial")
+    check(db.trials_report(con)["total"] == 1, "trial shows in the trials report")
+    con.close()
+    return "GATE_SCHEDULE_OK"
+
+
+GATES = {"schedule": gate_schedule, "import": gate_import, "settings": gate_settings, "monthend": gate_monthend, "coaches": gate_coaches, "coachday": gate_coachday, "players": gate_players, "weekly": gate_weekly,
          "trials": gate_trials, "cancel": gate_cancel, "pages": gate_pages, "legacy": gate_legacy}
 
 if __name__ == "__main__":

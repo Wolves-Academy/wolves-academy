@@ -1,12 +1,10 @@
 {# Shared scoresheet pieces. Import with: {% from "_ui.html" import tally, money, initials %} #}
 
-{# The package as N boxes: filled = sessions played, outlined = left, blue = next. #}
+{# The package as a plain count: "9/12" sessions used (the caller shows how many are left). #}
 {% macro tally(used, total, warn=False, dead=False, lg=False, anim=True) -%}
 {%- set total = (total or 0)|int -%}{%- set used = (used or 0)|int -%}
-<span class="tally{{ ' lg' if lg }}{{ ' warn' if warn }}{{ ' bad' if dead }}{{ ' tally-anim' if anim }}" role="img"
-      aria-label="{{ used }} / {{ total }}">
-  {%- for i in range(total if total <= 30 else 30) -%}<i class="{{ 'on' if i < used else ('nx' if i == used and not dead else '') }}"></i>{%- endfor -%}
-</span>
+<span class="num font-extrabold {{ 'text-[22px]' if lg else 'text-[14px]' }} {{ 'text-bad' if dead else ('text-warn' if warn else '') }}"
+      aria-label="{{ used }} / {{ total }}">{{ used }}<span class="text-faint font-semibold">/{{ total }}</span></span>
 {%- endmacro %}
 
 {# 20 -> "20", 12.5 -> "12.5", 1.666 -> "1.67", 1200 -> "1,200" #}

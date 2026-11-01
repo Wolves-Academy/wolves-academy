@@ -32,7 +32,7 @@
         <div class="row">
           {{ initials(c.name) }}
           <div class="flex-1 min-w-0">
-            <div class="font-bold truncate">{{ c.name }}</div>
+            <a href="/coaches/{{ c.id }}" class="font-bold truncate block hover:text-accent">{{ c.name }}</a>
             <div class="sub" data-in="{{ c.id }}">{{ t('w_not_in') }}</div>
           </div>
           <span class="end">
@@ -53,7 +53,7 @@
 {% block scripts %}
 <script>
 const IN_AT = {{ t('w_in_at')|tojson }}, NOT_IN = {{ t('w_not_in')|tojson }};
-const VIA = {{ {'qr': t('w_via_qr'), 'whatsapp': t('w_via_wa'), 'admin': t('w_via_admin')}|tojson }};
+const VIA = {{ {'qr': t('w_via_qr'), 'whatsapp': t('w_via_wa'), 'admin': t('w_via_admin'), 'marks': t('w_via_marks')}|tojson }};
 let left = 60;
 async function refreshQr(){
   const r = await fetch('/api/checkin/qr'); if (!r.ok) return;

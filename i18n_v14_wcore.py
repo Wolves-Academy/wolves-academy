@@ -52,3 +52,38 @@ AR.update({"w_install_title": "نزّل تطبيق Wolves على تلفونك", 
            "w_ios_step1": "اكبس زر المشاركة", "w_ios_step2": "انزل لتحت واكبس «إضافة إلى الشاشة الرئيسية»", "w_ios_step3": "اكبس «إضافة»",
            "w_ios_safari": "مش طالع معك؟ يمكن فاتح الرابط من الواتساب: افتحه بسفاري أول.",
            "w_and_step1": "اكبس قائمة ⋮ فوق بكروم", "w_and_step2": "اكبس «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية»"})
+
+# schedules, adding existing players, dated freezes, coach days
+EN.update({
+    "w_grp_days": "Training days and times",
+    "w_grp_days_hint": "Tick each day the group trains and its time. Nothing ticked = the academy's training days.",
+    "w_grp_academy_days": "Academy days",
+    "w_add_existing_hint": "Pick a player: they join this group on all its days.",
+    "search_player": "Search a player", "w_on_sheet": "In this group",
+    "w_add_new_instead": "Not in the list? Add a new player",
+    "w_player_schedule": "Schedule",
+    "w_player_schedule_hint": "Their group's days are ticked. Untick a day they skip, or tick another group's day they also come to.",
+    "w_also_other_group": "Also trains with another group",
+    "w_freeze_planned": "Planned", "w_freeze_del_q": "Delete this freeze period?", "delete": "Delete",
+    "w_freeze_from": "From", "w_freeze_until": "Until (last day)",
+    "w_freeze_until_hint": "Leave Until empty to freeze until you unfreeze. With dates it starts and ends by itself.",
+    "w_freeze_need_until": "A freeze that starts later needs an end date.",
+    "w_add_day": "Add a day (forgot to check in)", "w_via_marks": "took attendance",
+    "w_remove_day_q": "Remove this day from the coach?",
+})
+AR.update({
+    "w_grp_days": "أيام ومواعيد التمرين",
+    "w_grp_days_hint": "علّم كل يوم بتتمرن فيه المجموعة ووقته. إذا ما علّمت ولا يوم = أيام تمرين الأكاديمية.",
+    "w_grp_academy_days": "أيام الأكاديمية",
+    "w_add_existing_hint": "اختار لاعب: بينضم لهالمجموعة بكل أيامها.",
+    "search_player": "دوّر على لاعب", "w_on_sheet": "بهالمجموعة",
+    "w_add_new_instead": "مش موجود بالقائمة؟ ضيف لاعب جديد",
+    "w_player_schedule": "البرنامج", "w_also_other_group": "بيتمرن كمان مع مجموعة ثانية",
+    "w_player_schedule_hint": "أيام مجموعته معلّمة. شيل يوم ما بيجي فيه، أو علّم يوم من مجموعة ثانية بيجي معها كمان.",
+    "w_freeze_planned": "مخطط", "w_freeze_del_q": "بدك تحذف فترة التجميد؟", "delete": "حذف",
+    "w_freeze_from": "من", "w_freeze_until": "لغاية (آخر يوم)",
+    "w_freeze_until_hint": "اترك «لغاية» فاضي عشان يضل مجمّد لحد ما تفكّه. مع التواريخ بيبلش وبيخلص لحاله.",
+    "w_freeze_need_until": "التجميد اللي ببلش بعدين لازم إله تاريخ نهاية.",
+    "w_add_day": "ضيف يوم (نسي يسجّل)", "w_via_marks": "سجّل الحضور",
+    "w_remove_day_q": "بدك تشيل هاليوم من المدرب؟",
+})

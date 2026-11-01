@@ -132,7 +132,9 @@ def healthz():
         ms.append(round((_t.perf_counter() - t0) * 1000, 1))
     con.close()
     host = urllib.parse.urlparse(db._pg_url()).hostname if db.is_postgres() else "sqlite"
-    return jsonify({"app_region": os.environ.get("VERCEL_REGION", "local"), "db_host": host, "db_ms": ms})
+    import time as _t2
+    return jsonify({"app_region": os.environ.get("VERCEL_REGION", "local"), "db_host": host, "db_ms": ms,
+                    "now": datetime.now().isoformat(timespec="seconds"), "tz": _t2.tzname[0]})
 
 
 @app.route("/sw.js")
@@ -186,6 +188,12 @@ def _page_read_cache():
     # page views read shared tables once (see database._cached); writes always go to the database
     if request.method == "GET":
         db.read_cache_begin()
+    if db._FREEZE_SYNC["day"] != date.today().isoformat() and current_role():
+        con = db.get_db()   # once a day: dated freezes start/end by themselves
+        try:
+            db.sync_freeze_status(con)
+        finally:
+            con.close()
 
 
 @app.teardown_request
@@ -525,24 +533,38 @@ def player_form(pid=None):
         elif not first or not last:
             error = translate(current_lang(), "w_name_required")
         else:
+            group_id, slots = _schedule_from_form(con, f)
+            new_status = f.get("status") or "active"
+            old_status = player["status"] if player else None
+            # freezing goes through freeze_player below so the freeze history stays right
+            stored_status = old_status if new_status == "frozen" or old_status == "frozen" else new_status
             vals = (full, first, middle, last, (f.get("school") or "").strip(),
                     f.get("birth_date") or "", f.get("gender") or "M",
                     (f.get("phone") or "").strip(), (f.get("guardian_name") or "").strip(), gphone,
                     (f.get("parent2_name") or "").strip(), mphone,
-                    f.get("group_id") or None, f.get("join_date") or date.today().isoformat(),
-                    (f.get("notes") or "").strip(), f.get("status") or "active",
-                    1 if f.get("trial_used") else 0)
+                    group_id, f.get("join_date") or date.today().isoformat(),
+                    (f.get("notes") or "").strip(), stored_status or "active",
+                    1 if f.get("trial_used") else 0, slots)
             cols = ("full_name,first_name,middle_name,last_name,school,birth_date,gender,phone,guardian_name,"
-                    "guardian_phone,parent2_name,parent2_phone,group_id,join_date,notes,status,trial_used")
+                    "guardian_phone,parent2_name,parent2_phone,group_id,join_date,notes,status,trial_used,slots")
             if player:
                 con.execute(f"UPDATE players SET {', '.join(c + '=?' for c in cols.split(','))} WHERE id=?",
                             vals + (pid,))
                 con.commit()
+                if new_status == "frozen" and old_status != "frozen":
+                    db.freeze_player(con, pid)
+                elif old_status == "frozen" and new_status != "frozen":
+                    db.unfreeze_player(con, pid)
+                    if new_status != "active":
+                        con.execute("UPDATE players SET status=? WHERE id=?", (new_status, pid))
+                        con.commit()
                 con.close()
                 return redirect(url_for("player_card", pid=pid))
             cur = con.execute(f"INSERT INTO players ({cols}) VALUES ({','.join('?' * len(vals))})", vals)
             con.commit()
             new_id = cur.lastrowid
+            if new_status == "frozen":
+                db.freeze_player(con, new_id)
             # a new player normally means they just paid, start their subscription
             if f.get("create_sub"):
                 db.create_subscription(
@@ -562,8 +584,45 @@ def player_form(pid=None):
     # schools already used first (incl. any typed once), then the known Amman list
     schools = used + sorted(s for s in AMMAN_SCHOOLS if s.lower() not in {u.lower() for u in used})
     con.close()
-    return render_template("player_form.html", player=player, groups=groups, error=error,
+    gsl = {g["id"]: db.group_slots(g) for g in groups}
+    # ticked schedule boxes: what was just submitted, else the player's own schedule
+    if request.method == "POST":
+        picked = set(request.form.getlist("slot"))
+    else:
+        picked = set()
+        for tok in (db.player_tokens(player) if player else []):
+            gid, day = tok.split(":", 1)
+            gs = gsl.get(int(gid)) if gid.isdigit() else None
+            if day == "*" and gs:
+                picked |= {f"{gid}:{s['day']}" for s in gs}
+            else:
+                picked.add(tok)
+    return render_template("player_form.html", player=player, groups=groups, error=error, gsl=gsl, picked=picked,
                            settings=st, today=date.today().isoformat(), schools=schools, form=request.form)
+
+
+def _schedule_from_form(con, f):
+    """(group_id, slots) from the player form: ticked days of any group. A group whose
+    every day is ticked is stored as 'gid:*' so later changes to that group carry over."""
+    group_id = int(f.get("group_id")) if (f.get("group_id") or "").isdigit() else None
+    picked = [s for s in f.getlist("slot") if ":" in s]
+    if not picked:
+        return group_id, ""
+    by_group = {}
+    for s in picked:
+        gid, day = s.split(":", 1)
+        if gid.isdigit():
+            by_group.setdefault(int(gid), set()).add(day)
+    groups = {g["id"]: g for g in con.execute("SELECT * FROM groups").fetchall()}
+    toks = []
+    for gid, days in by_group.items():
+        if gid not in groups:
+            continue
+        gdays = set(db.group_days(groups[gid]))
+        toks += [f"{gid}:*"] if ("*" in days or (gdays and gdays <= days)) else [f"{gid}:{d}" for d in sorted(days)]
+    if group_id is None and toks:
+        group_id = int(toks[0].split(":")[0])
+    return group_id, db.tokens_to_store(group_id, toks)
 
 
 @app.route("/api/suggest-group")
@@ -615,11 +674,37 @@ def player_card(pid):
             suggested_start = nxt
         elif (date.today() - date.fromisoformat(nxt)).days <= 35:
             suggested_start = nxt
+    schedule = _schedule_lines(con, p)
     con.close()
     return render_template("player_card.html", p=p, info=info, subs=subs, pays=pays, att=att,
                            att_stats=att_stats, wa=wa, settings=st, prev_expiry=prev_expiry,
                            suggested_start=suggested_start, balance=balance, freezes=freezes,
-                           trial_date=trial_date, today=date.today().isoformat())
+                           trial_date=trial_date, today=date.today().isoformat(), schedule=schedule)
+
+
+def _schedule_lines(con, p):
+    """['Juniors: Sun/Tue 5:00', 'Youth: Sat 6:00'] for the player card."""
+    lang = current_lang()
+    groups = {g["id"]: g for g in con.execute("SELECT * FROM groups").fetchall()}
+    out = []
+    for tok in db.player_tokens(p):
+        gid, day = tok.split(":", 1)
+        g = groups.get(int(gid)) if gid.isdigit() else None
+        if not g:
+            continue
+        slots = db.group_slots(g)
+        if day != "*":
+            slots = [s for s in slots if s["day"] == day]
+        name = g["name_ar"] if lang == "ar" else g["name_en"]
+        out.append((name, db.slots_label(slots, lang) or translate(lang, "w_grp_academy_days")))
+    if not p["slots"]:   # just their group's days: the group name is already on the card
+        g = groups.get(p["group_id"])
+        lbl = db.slots_label(db.group_slots(g), lang) if g else ""
+        return [lbl] if lbl else []
+    merged = {}
+    for name, lbl in out:   # "3:Sunday,3:Tuesday" -> one line per group
+        merged.setdefault(name, []).append(lbl)
+    return [f"{n}: {' · '.join(v)}" for n, v in merged.items()]
 
 
 @app.route("/api/players/<int:pid>/renew", methods=["POST"])
@@ -665,9 +750,23 @@ def api_sub_preview():
     """Live preview for the renewal sheet: the dates a package would cover."""
     start = _iso(request.args.get("start")) or date.today().isoformat()
     n = max(1, min(200, request.args.get("sessions", type=int) or 12))
-    dates = db.session_dates(start, n, db.get_settings())
+    st = db.get_settings()
+    con = db.get_db()
+    pid = request.args.get("pid", type=int)
+    if pid:   # renewal: this player's own days, freezes and cancelled sessions
+        dates = db.session_dates(start, n, st, db.player_skipper(con, pid, st), db.player_weekdays(con, pid))
+    else:     # new-player form: the days ticked in its schedule
+        wds = _weekdays_of_slots(con, request.args.get("slots", ""))
+        dates = db.session_dates(start, n, st, None, wds)
+    con.close()
     return jsonify({"start": start, "first": dates[0].isoformat() if dates else None,
                     "end": dates[-1].isoformat() if dates else None, "count": len(dates)})
+
+
+def _weekdays_of_slots(con, slots_csv):
+    """'3:Sunday,4:*' -> weekday ints (None = academy days)."""
+    groups = {g["id"]: g for g in con.execute("SELECT * FROM groups").fetchall()}
+    return db.weekdays_of({"group_id": None, "slots": slots_csv}, groups)
 
 
 @app.route("/api/players/<int:pid>/freeze", methods=["POST"])
@@ -675,9 +774,24 @@ def api_sub_preview():
 def api_freeze(pid):
     data = request.get_json(silent=True) or {}
     con = db.get_db()
-    db.freeze_player(con, pid, _iso(data.get("date")))
+    db.freeze_player(con, pid, _iso(data.get("date")), _iso(data.get("until")))
     con.close()
     return jsonify({"ok": True})
+
+
+@app.route("/freezes/<int:fid>/delete", methods=["POST"])
+@require_role("admin")
+def freeze_delete(fid):
+    """Remove a planned or mistaken freeze period."""
+    con = db.get_db()
+    row = con.execute("SELECT player_id FROM player_freezes WHERE id=?", (fid,)).fetchone()
+    if row:
+        con.execute("DELETE FROM player_freezes WHERE id=?", (fid,))
+        con.commit()
+        db.sync_freeze_status(con, force=True)
+        db.refresh_unpaid(con, row["player_id"])
+    con.close()
+    return redirect(url_for("player_card", pid=row["player_id"]) if row else url_for("players_page"))
 
 
 @app.route("/api/players/<int:pid>/unfreeze", methods=["POST"])
@@ -806,8 +920,43 @@ def attendance_page():
     closed = sorted(d.isoformat() for d in db.closed_dates(st))
     closed_groups = [f'{c["date"]}|{c["group_id"]}' for c in st.get("closed_days") or []
                      if isinstance(c, dict) and c.get("group_id")]
-    return render_template("attendance.html", groups=groups, default_date=default_date,
+    gdays = {g["id"]: db.group_days(g) for g in groups}
+    glabel = {g["id"]: db.slots_label(db.group_slots(g), current_lang()) or g["time_slot"] for g in groups}
+    return render_template("attendance.html", groups=groups, default_date=default_date, gdays=gdays, glabel=glabel,
                            today=default_date, schedule=schedule, closed=closed, closed_groups=closed_groups)
+
+
+def _roster(con, gid, sdate, statuses=("active", "frozen", "pending")):
+    """Players on group gid's sheet for sdate: its members on that weekday, incl. players
+    from other groups who picked this group's day (see database.on_roster)."""
+    g = con.execute("SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
+    rows = con.execute("SELECT * FROM players WHERE status IN (%s) ORDER BY full_name"
+                       % ",".join("?" * len(statuses)), statuses).fetchall()
+    return [p for p in rows if db.on_roster(p, gid, sdate, g)], g
+
+
+def _group_trains(g, sdate, st):
+    days = db.group_days(g) if g else []
+    if not days:
+        return db.is_training_day(sdate, st)
+    d = date.fromisoformat(sdate)
+    return db.WEEKDAY_NAMES[d.weekday()] in days and d not in db.closed_dates(st)
+
+
+def _tile(con, p, st, m=None):
+    """One player tile on the attendance sheet."""
+    info = player_sub_info(con, p, st)
+    return {
+        "id": p["id"], "name": p["full_name"],
+        "status": m["status"] if m else "none",
+        "left": info["left"], "paid": info["active"],
+        "total": (info["sub"] or {}).get("sessions_total") or 0 if info["active"] else 0,
+        "unpaid": bool(m and m["unpaid"]),
+        "trial": bool(m and "trial" in m.keys() and m["trial"]),
+        # never paid and never had the free trial: the first session is free
+        "trial_ok": not p["trial_used"] and not db._player_subs(con, p["id"]),
+        "pending": p["status"] == "pending",
+    }
 
 
 @app.route("/api/attendance")
@@ -818,30 +967,57 @@ def api_attendance_list():
     sdate = _iso(sdate) or date.today().isoformat()
     con = db.get_db()
     st = db.get_settings()
-    players = con.execute(
-        "SELECT * FROM players WHERE group_id=? AND status IN ('active','frozen','pending') ORDER BY full_name",
-        (gid,)).fetchall()
+    players, g = _roster(con, gid, sdate)
     marks = {r["player_id"]: r for r in con.execute(
         "SELECT * FROM attendance WHERE session_date=? AND group_id=?", (sdate, gid)).fetchall()}
     out, frozen = [], []
     for p in players:
-        m = marks.get(p["id"])
         # frozen players are off the sheet: they can't be marked or billed
         if p["status"] == "frozen" or db.frozen_on(con, p["id"], sdate):
             frozen.append({"id": p["id"], "name": p["full_name"]})
             continue
-        info = player_sub_info(con, p, st)
-        out.append({
-            "id": p["id"], "name": p["full_name"],
-            "status": m["status"] if m else "none",
-            "left": info["left"], "paid": info["active"],
-            "total": (info["sub"] or {}).get("sessions_total") or 0 if info["active"] else 0,
-            "unpaid": bool(m and m["unpaid"]),
-            "pending": p["status"] == "pending",
-        })
+        out.append(_tile(con, p, st, marks.get(p["id"])))
     con.close()
-    return jsonify({"players": out, "frozen": frozen, "date": sdate,
-                    "training": db.is_training_day(sdate, st)})
+    return jsonify({"players": out, "frozen": frozen, "date": sdate, "training": _group_trains(g, sdate, st)})
+
+
+@app.route("/api/players/brief")
+@require_role("admin", "coach")
+def api_players_brief():
+    """Every current player (name + group) for the 'add an existing player' search."""
+    con = db.get_db()
+    lang = current_lang()
+    rows = con.execute(
+        "SELECT p.id, p.full_name, p.status, g.name_ar, g.name_en FROM players p LEFT JOIN groups g ON g.id=p.group_id "
+        "WHERE p.status IN ('active','pending','frozen') ORDER BY p.full_name").fetchall()
+    con.close()
+    return jsonify([{"id": r["id"], "name": r["full_name"], "status": r["status"],
+                     "group": (r["name_ar"] if lang == "ar" else r["name_en"]) or r["name_ar"] or ""} for r in rows])
+
+
+@app.route("/api/attendance/add-existing", methods=["POST"])
+@require_role("admin", "coach")
+def api_attendance_add_existing():
+    """Put an existing player in this group: from now on they train with it on all its days."""
+    data = request.get_json(force=True)
+    pid, gid = int(data.get("player_id") or 0), int(data.get("group_id") or 0)
+    sdate = _iso(data.get("date")) or date.today().isoformat()
+    con = db.get_db()
+    p = con.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+    if not p or not con.execute("SELECT 1 FROM groups WHERE id=?", (gid,)).fetchone():
+        con.close()
+        return jsonify({"error": "missing"}), 400
+    if not p["group_id"]:
+        con.execute("UPDATE players SET group_id=? WHERE id=?", (gid, pid))
+    else:
+        toks = [t for t in db.player_tokens(p) if t.split(":")[0] != str(gid)] + [f"{gid}:*"]
+        con.execute("UPDATE players SET slots=? WHERE id=?", (db.tokens_to_store(p["group_id"], toks), pid))
+    con.commit()
+    p = con.execute("SELECT * FROM players WHERE id=?", (pid,)).fetchone()
+    m = con.execute("SELECT * FROM attendance WHERE player_id=? AND session_date=?", (pid, sdate)).fetchone()
+    tile = _tile(con, p, db.get_settings(), m)
+    con.close()
+    return jsonify({"ok": True, "player": tile})
 
 
 @app.route("/api/attendance/add-player", methods=["POST"])
@@ -869,6 +1045,15 @@ def api_attendance_add_player():
         "left": info["left"], "paid": info["active"], "frozen": False, "pending": True}})
 
 
+def _coach_on_court(con, sdate):
+    """A coach taking a group's attendance is on court that day (counts for their pay),
+    also when they fill in yesterday's sheet late."""
+    if current_role() == "coach" and current_coach_id():
+        on = _iso(sdate)
+        if on and on <= date.today().isoformat():
+            db.coach_check_in(con, current_coach_id(), on, "marks")
+
+
 @app.route("/api/attendance/mark", methods=["POST"])
 @require_role("admin", "coach")
 def api_attendance_mark():
@@ -881,12 +1066,16 @@ def api_attendance_mark():
     result = db.mark_attendance(
         con, int(data["player_id"]), data["date"], int(data["group_id"]),
         data["status"], marked_by=marker())
+    _coach_on_court(con, data["date"])
     # return fresh sessions-left for the badge
     p = con.execute("SELECT * FROM players WHERE id=?", (int(data["player_id"]),)).fetchone()
     info = player_sub_info(con, p)
+    trial_ok = not p["trial_used"] and not con.execute(
+        "SELECT 1 FROM subscriptions WHERE player_id=? LIMIT 1", (p["id"],)).fetchone()
     con.close()
     return jsonify({"ok": True, "status": result["status"], "unpaid": result["unpaid"],
-                    "trial": result.get("trial", False), "left": info["left"], "paid": info["active"]})
+                    "trial": result.get("trial", False), "trial_ok": trial_ok,
+                    "left": info["left"], "paid": info["active"]})
 
 
 @app.route("/api/attendance/mark-all-present", methods=["POST"])
@@ -897,9 +1086,9 @@ def api_attendance_mark_all():
     gid = int(data["group_id"])
     sdate = data["date"]
     con = db.get_db()
-    players = [p for p in con.execute(
-        "SELECT id FROM players WHERE group_id=? AND status IN ('active','pending')",
-        (gid,)).fetchall() if not db.frozen_on(con, p["id"], sdate)]
+    players = [p for p in _roster(con, gid, sdate, ("active", "pending"))[0]
+               if not db.frozen_on(con, p["id"], sdate)]
+    _coach_on_court(con, sdate)
     existing = {r["player_id"]: r["status"] for r in con.execute(
         "SELECT player_id, status FROM attendance WHERE session_date=? AND group_id=?",
         (sdate, gid)).fetchall()}
@@ -1120,16 +1309,19 @@ def groups_save():
     f = request.form
     con = db.get_db()
     gid = f.get("id")
+    # each training day has its own start time (e.g. Sunday 5:00, Saturday 6:00)
+    slots = [{"day": d, "time": (f.get("time_" + d) or "").strip()[:20]}
+             for d in db.WEEK_ORDER if f.get("day_" + d)]
     vals = (f.get("name_ar", "").strip(), f.get("name_en", "").strip(),
             int(f.get("min_age") or 0), int(f.get("max_age") or 99),
-            f.get("gender") or "mixed", f.get("schedule_days") or "Sun/Tue/Thu",
-            f.get("time_slot") or "", _wa_group_link(f.get("wa_link")))
+            f.get("gender") or "mixed", "/".join(s["day"][:3] for s in slots),
+            db.slots_label(slots), _wa_group_link(f.get("wa_link")), json.dumps(slots))
     if gid:
-        con.execute("UPDATE groups SET name_ar=?,name_en=?,min_age=?,max_age=?,gender=?,schedule_days=?,time_slot=?,wa_link=? "
-                    "WHERE id=?", vals + (gid,))
+        con.execute("UPDATE groups SET name_ar=?,name_en=?,min_age=?,max_age=?,gender=?,schedule_days=?,time_slot=?,"
+                    "wa_link=?,slots=? WHERE id=?", vals + (gid,))
     else:
-        con.execute("INSERT INTO groups (name_ar,name_en,min_age,max_age,gender,schedule_days,time_slot,wa_link) "
-                    "VALUES (?,?,?,?,?,?,?,?)", vals)
+        con.execute("INSERT INTO groups (name_ar,name_en,min_age,max_age,gender,schedule_days,time_slot,wa_link,slots) "
+                    "VALUES (?,?,?,?,?,?,?,?,?)", vals)
     con.commit()
     con.close()
     return redirect(f.get("back") or url_for("groups_page"))
@@ -1160,8 +1352,10 @@ def groups_page():
         "FROM groups g ORDER BY g.id").fetchall()
     con.close()
     group_error = request.args.get("group_error", type=int)
-    return render_template("groups.html", groups=groups, group_error=group_error,
-                           all_days=list(DAY_AR.keys()))
+    gslots = {g["id"]: {s["day"]: s["time"] for s in db.group_slots(g)} for g in groups}
+    glabel = {g["id"]: db.slots_label(db.group_slots(g), current_lang()) for g in groups}
+    return render_template("groups.html", groups=groups, group_error=group_error, gslots=gslots, glabel=glabel,
+                           week=db.WEEK_ORDER)
 
 
 # ---------------- assistant (fake AI) ----------------
@@ -1452,7 +1646,8 @@ def coach_detail(cid):
     month_days = db.coach_month_sessions(con, cid, month)
     con.close()
     return render_template("coach_detail.html", c=c, logins=logins, days=days, marks=marks, salary=salary,
-                           month_days=month_days,
+                           month_days=month_days, today=date.today().isoformat(),
+                           yesterday=(date.today() - timedelta(days=1)).isoformat(),
                            code_error=request.args.get("code_error"))
 
 
@@ -1571,9 +1766,12 @@ def api_coaches_day():
     """Active coaches and whether each worked on a date (attendance sheet strip)."""
     on = _iso(request.args.get("date")) or date.today().isoformat()
     con = db.get_db()
-    rows = [{"id": c["id"], "name": c["name"], "present": bool(con.execute(
-        "SELECT 1 FROM coach_attendance WHERE coach_id=? AND session_date=?", (c["id"], on)).fetchone())}
-        for c in con.execute("SELECT * FROM coaches WHERE active=1 ORDER BY name").fetchall()]
+    here = {r["coach_id"]: r for r in con.execute(
+        "SELECT coach_id, check_in, method FROM coach_attendance WHERE session_date=?", (on,)).fetchall()}
+    rows = [{"id": c["id"], "name": c["name"], "present": c["id"] in here,
+             "check_in": here[c["id"]]["check_in"] if c["id"] in here else None,
+             "method": here[c["id"]]["method"] if c["id"] in here else None}
+            for c in con.execute("SELECT id, name FROM coaches WHERE active=1 ORDER BY name").fetchall()]
     con.close()
     return jsonify({"date": on, "coaches": rows})
 
@@ -1645,6 +1843,8 @@ def coach_present(cid):
         present = True
     con.commit()
     con.close()
+    if request.form.get("back", "").startswith("/coaches/"):   # coach page form (add / remove a day)
+        return redirect(request.form["back"])
     return jsonify({"ok": True, "present": present})
 
 
